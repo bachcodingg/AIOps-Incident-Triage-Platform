@@ -25,18 +25,26 @@ def tokenize(text: str) -> list[str]:
 
 
 def edit_distance(a: str, b: str, limit: int) -> int:
-    """Levenshtein distance, giving up early once it exceeds `limit`."""
+    """Damerau-Levenshtein (optimal string alignment) distance, giving up once it exceeds `limit`.
+
+    Swapped neighbours ("lapotp" -> "laptop") count as one edit, because that
+    is the most common typing mistake.
+    """
     if abs(len(a) - len(b)) > limit:
         return limit + 1
+    prev2: list[int] = []
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, start=1):
         cur = [i] + [0] * len(b)
         for j, cb in enumerate(b, start=1):
             cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb))
-        if min(cur) > limit:
+            if i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        # A cell depends on the previous two rows, so stop only when both are past the limit.
+        if min(cur) > limit and min(prev) > limit:
             return limit + 1
-        prev = cur
-    return prev[-1]
+        prev2, prev = prev, cur
+    return min(prev[-1], limit + 1)
 
 
 def max_typos(token: str) -> int:

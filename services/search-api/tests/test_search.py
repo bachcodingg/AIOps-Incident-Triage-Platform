@@ -21,7 +21,14 @@ def test_tokenize_lowercases_and_drops_stopwords():
 
 @pytest.mark.parametrize(
     ("a", "b", "expected"),
-    [("laptop", "laptop", 0), ("lapotp", "laptop", 2), ("lptop", "laptop", 1), ("phone", "phones", 1)],
+    [
+        ("laptop", "laptop", 0),
+        ("lapotp", "laptop", 1),  # transposition is one edit
+        ("lptop", "laptop", 1),
+        ("phone", "phones", 1),
+        ("ca", "abc", 3),  # OSA does not edit a substring twice
+        ("kitten", "sitting", 3),
+    ],
 )
 def test_edit_distance(a, b, expected):
     assert edit_distance(a, b, limit=3) == expected
@@ -41,6 +48,12 @@ def test_typo_is_corrected(index):
     result = search(index, "hedphones")
     assert result.corrected_query == "headphones"
     assert result.results[0]["id"] == 3
+
+
+def test_swapped_letters_are_corrected(index):
+    result = search(index, "lapotp")
+    assert result.corrected_query == "laptop"
+    assert {r["id"] for r in result.results} == {1, 2}
 
 
 def test_short_tokens_are_not_corrected(index):
