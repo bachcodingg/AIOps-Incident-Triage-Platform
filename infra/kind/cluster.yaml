@@ -1,0 +1,13 @@
+# Local evaluation cluster. One control-plane node keeps memory low enough
+# for a laptop; week 5 adds a worker so node-loss faults (F14) have a target.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: incidentlens
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # gateway NodePort -> http://localhost:8080 on the host
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: "127.0.0.1"
+        protocol: TCP
