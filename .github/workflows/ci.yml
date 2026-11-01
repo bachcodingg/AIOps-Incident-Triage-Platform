@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, search-api, catalog, indexer]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # The Dockerfile's `test` stage runs lint + unit tests, exactly like `make test`.
+      - uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          target: test
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  e2e:
+    name: e2e on kind (make up)
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # A fresh clone must come up end to end with one command (week 1 "done when").
+      - name: make up
+        run: make up
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl --context kind-incidentlens -n shopsearch get pods -o wide || true
+          kubectl --context kind-incidentlens -n shopsearch get events --sort-by=.lastTimestamp | tail -40 || true
+          kubectl --context kind-incidentlens -n shopsearch logs --prefix --tail=80 -l app.kubernetes.io/part-of=shopsearch || true
