@@ -1,0 +1,22 @@
+# tools downloaded by the Makefile
+.bin/
+
+# build output
+node_modules/
+dist/
+target/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# local secrets and editor files
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+.idea/
+.vscode/
+*.iml
+.DS_Store

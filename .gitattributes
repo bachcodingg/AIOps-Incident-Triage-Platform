@@ -1,0 +1,6 @@
+# Scripts run inside Linux containers and CI: keep LF everywhere.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary

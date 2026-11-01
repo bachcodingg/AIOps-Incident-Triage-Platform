@@ -1,0 +1,113 @@
+# Fault catalog, draft (week 1). chaos-runner reads this file in week 5.
+#
+# Each fault runs 5 times at different intensities and times of day:
+# 14 x 5 = 70 incidents, plus 20 fault-free windows for false-alarm rates.
+#
+# root_cause is the label the triage agent must reproduce: <component> + <category>.
+# correct_action is one of: rollback, restart, scale_out, none_escalate, none_verify.
+# The labels written at run time go to a sealed file the AIOps layer cannot read.
+
+faults:
+  - id: F01
+    name: Crash loop after config change
+    inject: {kind: bad-release, how: "broken env var in the release"}
+    targets: [gateway, search-api, catalog, indexer]
+    root_cause: {component: "<target>", category: bad-release}
+    correct_action: rollback
+
+  - id: F02
+    name: Bad release, 5% HTTP 500
+    inject: {kind: bad-release, how: "image with FAULT_ERROR_RATE flag on"}
+    targets: [gateway, search-api, catalog]
+    intensities: [0.02, 0.05, 0.10]
+    root_cause: {component: "<target>", category: bad-release}
+    correct_action: rollback
+
+  - id: F03
+    name: Slow release, p95 +250 ms
+    inject: {kind: bad-release, how: "image with an added sleep"}
+    targets: [gateway, search-api, catalog]
+    intensities: [150ms, 250ms, 500ms]
+    root_cause: {component: "<target>", category: bad-release}
+    correct_action: rollback
+
+  - id: F04
+    name: Memory leak
+    inject: {kind: bad-release, how: "worker image that leaks"}
+    targets: [indexer, search-api]
+    root_cause: {component: "<target>", category: resource}
+    correct_action: restart  # then rollback
+
+  - id: F05
+    name: CPU saturation
+    inject: {kind: chaos-mesh, resource: StressChaos}
+    targets: [search-api, catalog]
+    intensities: [2 workers, 4 workers]
+    root_cause: {component: "<target>", category: resource}
+    correct_action: scale_out
+
+  - id: F06
+    name: Traffic spike 5x
+    inject: {kind: load, how: "k6 burst"}
+    targets: [gateway]
+    intensities: [3x, 5x, 8x]
+    root_cause: {component: gateway, category: load}
+    correct_action: scale_out
+
+  - id: F07
+    name: Network latency between 2 services
+    inject: {kind: chaos-mesh, resource: NetworkChaos, action: delay}
+    targets: [gateway->search-api, search-api->redis, catalog->postgres]
+    intensities: [100ms, 300ms]
+    root_cause: {component: "<link>", category: network}
+    correct_action: none_escalate
+
+  - id: F08
+    name: Packet loss
+    inject: {kind: chaos-mesh, resource: NetworkChaos, action: loss}
+    targets: [gateway->search-api, catalog->postgres]
+    intensities: ["10%", "20%"]
+    root_cause: {component: "<link>", category: network}
+    correct_action: none_escalate
+
+  - id: F09
+    name: DNS failures
+    inject: {kind: chaos-mesh, resource: DNSChaos, action: error}
+    targets: [cluster]
+    root_cause: {component: cluster, category: dns}
+    correct_action: none_escalate
+
+  - id: F10
+    name: Redis down
+    inject: {kind: chaos-mesh, resource: PodChaos, how: "kill and block restart"}
+    targets: [redis]
+    root_cause: {component: redis, category: dependency}
+    correct_action: restart
+
+  - id: F11
+    name: DB connection pool exhaustion
+    inject: {kind: bad-release, how: "catalog release with QUARKUS_DATASOURCE_JDBC_MAX_SIZE=2"}
+    targets: [catalog]
+    root_cause: {component: catalog, category: bad-release}
+    correct_action: rollback
+
+  - id: F12
+    name: Slow DB query
+    inject: {kind: bad-release, how: "migration that drops idx_product_category"}
+    targets: [postgres]
+    root_cause: {component: postgres, category: bad-release}
+    correct_action: rollback
+
+  - id: F13
+    name: Disk filling on DB volume
+    inject: {kind: chaos-mesh, resource: IOChaos, how: "or a file writer sidecar"}
+    targets: [postgres]
+    root_cause: {component: postgres, category: resource}
+    correct_action: none_escalate
+
+  - id: F14
+    name: Node loss
+    inject: {kind: infra, how: "terminate a worker node"}
+    targets: [node]
+    root_cause: {component: node, category: infrastructure}
+    correct_action: none_verify  # self-heals; verify recovery
