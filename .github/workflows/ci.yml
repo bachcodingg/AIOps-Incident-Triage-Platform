@@ -32,19 +32,41 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-  e2e:
-    name: e2e on kind (make up)
-    needs: unit
+  gitops-lint:
+    name: charts and policies
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      KYVERNO_VERSION: v1.19.2
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install kubeconform and kyverno
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz -C /usr/local/bin kubeconform
+          curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin kyverno
+      - run: make gitops-lint
+
+  e2e:
+    name: e2e on kind (make up, canary, policies)
+    needs: [unit, gitops-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # ArgoCD syncs from GitHub, so it has to follow the branch under test.
+      REVISION: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
       # A fresh clone must come up end to end with one command (week 1 "done when").
       - name: make up
         run: make up
+      # A good release is promoted, a bad one is aborted, bad pods are rejected (week 3 "done when").
+      - name: make canary-test
+        run: make canary-test
       - name: Diagnostics
         if: failure()
         run: |
-          kubectl --context kind-incidentlens -n shopsearch get pods -o wide || true
+          kubectl --context kind-incidentlens -n argocd get applications || true
+          kubectl --context kind-incidentlens get pods -A -o wide || true
+          kubectl --context kind-incidentlens -n shopsearch get rollouts,analysisruns || true
           kubectl --context kind-incidentlens -n shopsearch get events --sort-by=.lastTimestamp | tail -40 || true
           kubectl --context kind-incidentlens -n shopsearch logs --prefix --tail=80 -l app.kubernetes.io/part-of=shopsearch || true

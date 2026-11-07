@@ -1,0 +1,26 @@
+{{- $allowed := concat (list .Values.signedImages) .Values.allowedImages -}}
+{{- if .Values.allowLocalImages }}{{ $allowed = append $allowed "incidentlens/*" }}{{ end -}}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-registries
+  annotations:
+    policies.kyverno.io/description: Signature checks only cover our own images, so everything else must come from a short list.
+spec:
+  background: false
+  rules:
+    - name: images-come-from-the-allow-list
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [shopsearch]
+      validate:
+        failureAction: Enforce
+        message: "Allowed images: {{ join ", " $allowed }}."
+        pattern:
+          spec:
+            containers:
+              - image: {{ join " | " $allowed | quote }}
+            =(initContainers):
+              - image: {{ join " | " $allowed | quote }}

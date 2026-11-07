@@ -1,0 +1,50 @@
+# The one thing installed by hand, because something has to install ArgoCD.
+# scripts/bootstrap-gitops.sh applies this and the root Application.
+dex: {enabled: false}
+notifications: {enabled: false}
+applicationSet: {replicas: 0}
+
+configs:
+  params:
+    server.insecure: true
+    # Helm renders are what spike memory and CPU. On a small node, doing them
+    # a few at a time is slower and stops the node from going NotReady.
+    reposerver.parallelism.limit: 2
+    controller.status.processors: 5
+    controller.operation.processors: 3
+    controller.kubectl.parallelism.limit: 5
+  cm:
+    timeout.reconciliation: 60s
+    # Argo CD dropped the health check for Application in 1.8. Without it a sync
+    # wave would not wait for the previous wave's apps to become healthy.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi} # it caches every resource it manages; OOMKilled at 512Mi
+
+repoServer:
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 256Mi}
+
+server:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 160Mi}
+
+redis:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 64Mi}

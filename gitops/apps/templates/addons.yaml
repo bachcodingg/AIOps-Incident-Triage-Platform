@@ -1,0 +1,37 @@
+{{- range $name, $addon := .Values.addons }}
+{{- if $addon.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $addon.wave | quote }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $addon.namespace }}
+  source:
+    repoURL: {{ $addon.repoURL }}
+    chart: {{ $addon.chart }}
+    targetRevision: {{ $addon.version }}
+    helm:
+      releaseName: {{ $name }}
+      valuesObject:
+        {{- toYaml $addon.values | nindent 8 }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # some CRDs are too large for client-side apply
+    retry:
+      limit: 5
+      backoff: {duration: 10s, factor: 2, maxDuration: 3m}
+{{- end }}
+{{- end }}

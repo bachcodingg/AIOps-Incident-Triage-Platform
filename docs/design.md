@@ -1,6 +1,6 @@
 # IncidentLens: design doc
 
-Status: draft, week 1 (2026-11) · Owner: @bachcodingg · Reviewers: open
+Status: draft, updated week 3 (2026-11) · Owner: @bachcodingg · Reviewers: open
 
 ## 1. Problem and goal
 
@@ -155,10 +155,26 @@ not "operated EKS in production". kind realism gap is addressed by re-running
 10 test incidents on EKS in one session and reporting both.
 
 Local resource note: Docker Desktop on the dev laptop currently has 4 GB. The
-workload fits; the week-4 observability stack will need ~8–12 GB or dropping
-Tempo (scope cut 4).
+GitOps stack from week 3 fits in that; the rest of the week-4 observability
+stack will need ~8–12 GB or dropping Tempo (scope cut 4).
 
-## 8. Risks
+## 8. Delivery (week 3)
+
+Git is the only way into the cluster. `make up` deploys through ArgoCD as well,
+so a laptop and a cloud cluster share one deploy path. Details:
+[gitops/README.md](../gitops/README.md).
+
+Changes to the original plan, and why:
+
+| Change | Why |
+|---|---|
+| Prometheus and a constant k6 load arrive in week 3, not week 4 | canary analysis cannot judge a release without metrics and traffic |
+| Services expose `/metrics` now; OpenTelemetry follows in week 4 | same reason; gateway and search-api already use the OTel metric names, so those queries survive the swap, while catalog's change with it |
+| Canary fails on a rise over the stable release as well as on the SLO | F03 adds 250 ms, which fits under the 300 ms SLO |
+| Canary weights are nominal | no traffic router, so Rollouts splits by replica count |
+| External Secrets waits for week 4 | CloudNativePG generates the only secret so far |
+
+## 9. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -168,7 +184,7 @@ Tempo (scope cut 4).
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 9. Open questions
+## 10. Open questions
 
 - Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM?
 - Is the AWS free plan allowed to create EKS, or does each session need paid mode?

@@ -2,7 +2,7 @@ import json
 import urllib.request
 
 from indexer.catalog_client import fetch_all_products
-from indexer.health import HealthState, serve
+from indexer.health import CHANGES, HealthState, serve
 
 
 def test_fetch_all_products_pages_until_short_page():
@@ -40,6 +40,20 @@ def get(port, path):
             return res.status, json.load(res)
     except urllib.error.HTTPError as err:
         return err.code, json.load(err)
+
+
+def test_health_server_exposes_metrics():
+    state = HealthState()
+    server = serve(state, port=0)
+    port = server.server_address[1]
+    try:
+        CHANGES.labels("applied").inc()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2) as res:
+            body = res.read().decode()
+        assert res.status == 200
+        assert 'indexer_changes_total{outcome="applied"}' in body
+    finally:
+        server.shutdown()
 
 
 def test_health_server_reports_readiness():

@@ -1,0 +1,20 @@
+# One k3s node. k3s bundles metrics-server, and its ServiceLB publishes the
+# gateway on port 80 of the VM, the only web port the security list opens.
+addons:
+  metrics-server:
+    enabled: false
+
+workload:
+  gateway:
+    values:
+      service: {type: LoadBalancer, port: 80}
+      autoscaling: {minReplicas: 1}
+  search-api:
+    values:
+      autoscaling: {minReplicas: 1}
+  catalog:
+    values:
+      autoscaling: {minReplicas: 1}
+  loadgen:
+    values:
+      targets: {gateway: "http://gateway:80"}

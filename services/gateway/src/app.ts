@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import type { Config } from "./config.js";
+import { Metrics } from "./metrics.js";
 
 export type FetchFn = typeof fetch;
 
@@ -8,6 +9,7 @@ export interface AppOptions {
   config: Config;
   fetchFn?: FetchFn;
   logger?: boolean;
+  random?: () => number;
 }
 
 // Calls an upstream service and relays its JSON body and status code.
@@ -45,9 +47,24 @@ async function proxyJson(
   return reply.code(res.status).send(body);
 }
 
-export async function buildApp({ config, fetchFn = fetch, logger = true }: AppOptions): Promise<FastifyInstance> {
+export async function buildApp({
+  config,
+  fetchFn = fetch,
+  logger = true,
+  random = Math.random,
+}: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: logger ? { level: config.logLevel } : false,
+  });
+
+  const metrics = new Metrics();
+
+  // Fires for every response, including 429s from the rate limiter below.
+  app.addHook("onResponse", async (req, reply) => {
+    const route = req.routeOptions.url;
+    if (route?.startsWith("/api/")) {
+      metrics.observe(req.method, route, reply.statusCode, reply.elapsedTime / 1000);
+    }
   });
 
   await app.register(rateLimit, {
@@ -59,6 +76,19 @@ export async function buildApp({ config, fetchFn = fetch, logger = true }: AppOp
   // Kubernetes kill healthy pods.
   app.get("/healthz", { config: { rateLimit: false } }, async () => ({ status: "ok" }));
   app.get("/readyz", { config: { rateLimit: false } }, async () => ({ status: "ready" }));
+
+  app.get("/metrics", { config: { rateLimit: false } }, async (_req, reply) =>
+    reply.type(metrics.contentType).send(await metrics.render()),
+  );
+
+  // A deliberately bad release (F02) turns this on with FAULT_ERROR_RATE.
+  if (config.faultErrorRate > 0) {
+    app.addHook("preHandler", async (req, reply) => {
+      if (req.routeOptions.url?.startsWith("/api/") && random() < config.faultErrorRate) {
+        return reply.code(500).send({ error: "injected_fault" });
+      }
+    });
+  }
 
   app.get<{ Querystring: { q?: string; limit?: string } }>("/api/search", async (req, reply) => {
     const q = (req.query.q ?? "").trim();

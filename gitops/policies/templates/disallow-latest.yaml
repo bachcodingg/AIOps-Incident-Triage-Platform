@@ -1,0 +1,24 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest
+  annotations:
+    policies.kyverno.io/description: A moving tag makes a rollback meaningless and hides what actually runs.
+spec:
+  background: false
+  rules:
+    - name: images-have-a-fixed-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [shopsearch]
+      validate:
+        failureAction: Enforce
+        message: Images need an explicit tag, and it cannot be latest.
+        pattern:
+          spec:
+            containers:
+              - image: "*:* & !*:latest"
+            =(initContainers):
+              - image: "*:* & !*:latest"

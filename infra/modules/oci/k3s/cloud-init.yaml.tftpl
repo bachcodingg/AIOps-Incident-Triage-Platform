@@ -1,0 +1,16 @@
+#cloud-config
+package_update: true
+packages:
+  - curl
+runcmd:
+  # Oracle's Ubuntu images ship a REJECT rule in iptables. The security list is
+  # the firewall here, and the rule would otherwise block pod networking.
+  - iptables -F INPUT
+  - iptables -F FORWARD
+  - netfilter-persistent save
+  # The public address goes into the API certificate so kubectl works remotely.
+  - |
+    PUBLIC_IP="$(curl -fsS https://checkip.amazonaws.com)"
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_VERSION='${k3s_version}' \
+      INSTALL_K3S_EXEC="server --tls-san $PUBLIC_IP --write-kubeconfig-mode 600 --disable traefik" sh -

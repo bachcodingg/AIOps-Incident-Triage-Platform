@@ -1,0 +1,129 @@
+name: infra
+
+on:
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/infra.yml"]
+  pull_request:
+    paths: ["infra/**", ".github/workflows/infra.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: 1.12.2
+  TERRAGRUNT_VERSION: v1.2.1
+  CHECKOV_VERSION: 3.4.3
+  # Terragrunt needs these to render the units. They are placeholders: nothing
+  # here talks to a cloud account unless AWS_PLAN_ROLE_ARN is configured.
+  AWS_ACCOUNT_ID: "123456789012"
+  ADMIN_CIDR: 203.0.113.10/32
+  BUDGET_ALERT_EMAIL: alerts@example.com
+  OCI_COMPARTMENT_OCID: ocid1.compartment.oc1..placeholder
+  OCI_NAMESPACE: placeholder
+  SSH_PUBLIC_KEY: placeholder
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.65.0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install "checkov==${CHECKOV_VERSION}"
+      - run: make infra-lint
+
+  test:
+    name: validate and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: terraform validate and test, offline on mocked providers
+        run: make infra-test | tee infra-test.txt
+      - name: Install Terragrunt
+        run: |
+          curl -fsSLo /usr/local/bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
+          chmod +x /usr/local/bin/terragrunt
+      - name: terragrunt hcl fmt and validate
+        working-directory: infra/live
+        run: |
+          terragrunt hcl fmt --check
+          terragrunt hcl validate
+      - uses: actions/upload-artifact@v7
+        with:
+          name: infra-test
+          path: infra-test.txt
+
+  plan:
+    name: plan comment
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # keyless AWS access through OIDC
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAN_ROLE: ${{ vars.AWS_PLAN_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: infra-test
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: env.PLAN_ROLE != ''
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE }}
+          aws-region: eu-central-1
+      - name: Real plan against AWS
+        if: env.PLAN_ROLE != ''
+        working-directory: infra/live/aws
+        run: |
+          curl -fsSLo /usr/local/bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
+          chmod +x /usr/local/bin/terragrunt
+          export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          terragrunt run --all --non-interactive --filter '!./state' -- plan -no-color -lock=false > "$GITHUB_WORKSPACE/plan.txt" 2>&1
+      - name: Comment on the pull request
+        run: |
+          {
+            echo '### Terraform'
+            echo
+            if [ -f plan.txt ]; then
+              echo 'Plan against the real AWS account:'
+              echo
+              echo '<details><summary>plan</summary>'
+              echo
+              echo '```'
+              tail -c 55000 plan.txt
+              echo '```'
+              echo '</details>'
+            else
+              echo 'No real plan: the `AWS_PLAN_ROLE_ARN` repository variable is not set (see infra/README.md). Offline results on mocked providers:'
+              echo
+              echo '```'
+              grep -E '^==>|^Success!|^Failure!' infra-test.txt
+              echo '```'
+            fi
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md --edit-last --create-if-none

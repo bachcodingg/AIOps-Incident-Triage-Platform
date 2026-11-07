@@ -1,0 +1,66 @@
+image:
+  repository: ghcr.io/bachcodingg/incidentlens/catalog
+  tag: unreleased # release.yml opens the pull request that updates tag and digest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+runAsUser: 10001
+
+containerPort: {name: http, port: 8080}
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  nodePort: null
+
+env:
+  QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres-rw:5432/catalog
+  QUARKUS_DATASOURCE_USERNAME: catalog
+  QUARKUS_REDIS_HOSTS: redis://redis:6379
+
+# CloudNativePG generates this secret. Nothing sensitive is stored in Git.
+extraEnv:
+  - name: QUARKUS_DATASOURCE_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: postgres-app, key: password}
+
+startupProbe:
+  httpGet: {path: /q/health/started, port: http}
+  periodSeconds: 3
+  failureThreshold: 40
+readinessProbe:
+  httpGet: {path: /q/health/ready, port: http}
+  periodSeconds: 5
+livenessProbe:
+  httpGet: {path: /q/health/live, port: http}
+  periodSeconds: 10
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: "1", memory: 384Mi}
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilization: 70
+
+rollout:
+  pauseSeconds: 60
+  progressDeadlineSeconds: 300
+
+metrics:
+  path: /q/metrics
+
+analysis:
+  mode: http
+  prometheusAddress: http://prometheus-operated.monitoring.svc:9090
+  initialDelay: 45s
+  interval: 30s
+  # Micrometer's names until week 4 moves catalog to OpenTelemetry.
+  requestsMetric: http_server_requests_seconds_count
+  bucketMetric: http_server_requests_seconds_bucket
+  errorMatcher: status=~"5.."
+  maxErrorRateIncrease: 0.01
+  maxP95Seconds: 0.3 # the latency SLO
+  maxP95IncreaseSeconds: 0.1

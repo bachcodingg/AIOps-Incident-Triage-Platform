@@ -1,0 +1,30 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-limits
+  annotations:
+    policies.kyverno.io/description: A pod without limits can starve its neighbours and blur the chaos results.
+spec:
+  background: false
+  rules:
+    - name: containers-have-cpu-and-memory-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [shopsearch]
+      validate:
+        failureAction: Enforce
+        message: Every container needs CPU and memory limits.
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+            =(initContainers):
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"

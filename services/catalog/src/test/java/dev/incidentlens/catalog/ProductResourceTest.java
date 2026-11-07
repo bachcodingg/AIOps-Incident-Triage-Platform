@@ -1,9 +1,11 @@
 package dev.incidentlens.catalog;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
@@ -25,6 +27,17 @@ class ProductResourceTest {
                 {"sku": "%s", "name": "Test Phone", "description": "for tests",
                  "category": "phones", "price": %s, "stock": 3}
                 """.formatted(sku, price);
+    }
+
+    @Test
+    void exposesRequestLatencyHistogramForCanaryAnalysis() {
+        given().when().get("/products/1").then().statusCode(200);
+
+        given().when().get("/q/metrics")
+                .then().statusCode(200)
+                .body(containsString("http_server_requests_seconds_bucket"))
+                .body(containsString("uri=\"/products/{id}\""))
+                .body(not(containsString("uri=\"/q/")));
     }
 
     @Test
