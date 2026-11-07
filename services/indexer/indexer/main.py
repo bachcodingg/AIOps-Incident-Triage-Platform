@@ -9,7 +9,7 @@ import redis
 
 from . import core
 from .catalog_client import fetch_all_products
-from .health import HealthState, serve
+from .health import CHANGES, HealthState, serve
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("indexer")
@@ -49,7 +49,9 @@ def run() -> None:
         try:
             applied = core.consume_once(client, timeout_seconds=5)
             if applied is not None:
-                log.info("change %s", "applied" if applied else "dead-lettered")
+                outcome = "applied" if applied else "dead-lettered"
+                CHANGES.labels(outcome).inc()
+                log.info("change %s", outcome)
         except redis.RedisError as exc:
             log.warning("redis error, retrying: %s", exc)
             stop.wait(2.0)

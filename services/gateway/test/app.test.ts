@@ -54,6 +54,57 @@ describe("health", () => {
   });
 });
 
+describe("metrics", () => {
+  it("counts API requests by route and status, not probes", async () => {
+    const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
+    const a = await makeApp(fetchFn);
+    await a.inject("/healthz");
+    await a.inject("/api/search?q=tv");
+
+    const res = await a.inject("/metrics");
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/plain");
+    expect(res.body).toMatch(
+      /http_server_request_duration_seconds_count\{http_request_method="GET",http_route="\/api\/search",http_response_status_code="200"\} 1/,
+    );
+    expect(res.body).not.toContain('http_route="/healthz"');
+  });
+
+  it("records rate limited requests", async () => {
+    const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
+    const a = await makeApp(fetchFn);
+    for (let i = 0; i < 4; i++) await a.inject("/api/search?q=tv");
+    expect((await a.inject("/metrics")).body).toContain('http_response_status_code="429"');
+  });
+});
+
+describe("FAULT_ERROR_RATE", () => {
+  it("is off by default", () => {
+    expect(config.faultErrorRate).toBe(0);
+  });
+
+  it("rejects values outside 0..1", () => {
+    expect(() => loadConfig({ FAULT_ERROR_RATE: "5" })).toThrow(/FAULT_ERROR_RATE/);
+  });
+
+  it("answers 500 for the configured share of API requests, never for probes", async () => {
+    const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
+    const draws = [0.04, 0.5];
+    app = await buildApp({
+      config: { ...config, faultErrorRate: 0.05 },
+      fetchFn,
+      logger: false,
+      random: () => draws.shift() ?? 1,
+    });
+
+    expect((await app.inject("/healthz")).statusCode).toBe(200);
+    expect((await app.inject("/api/search?q=tv")).statusCode).toBe(500);
+    expect((await app.inject("/api/search?q=tv")).statusCode).toBe(200);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("GET /api/search", () => {
   it("forwards the query to search-api and relays the body", async () => {
     const fetchFn = vi.fn<FetchFn>().mockResolvedValue(jsonResponse({ total: 1, results: [{ id: 1 }] }));

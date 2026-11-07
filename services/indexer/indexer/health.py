@@ -11,6 +11,11 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+
+# Canary analysis compares these between the new and the old release.
+CHANGES = Counter("indexer_changes_total", "Catalog change events handled.", ["outcome"])
+
 
 class HealthState:
     def __init__(self, stale_after_seconds: float = 30.0, clock=time.monotonic):
@@ -29,6 +34,14 @@ class HealthState:
 def serve(state: HealthState, port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if self.path == "/metrics":
+                payload = generate_latest()
+                self.send_response(200)
+                self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             if self.path == "/healthz":
                 ok, body = state.alive(), {"status": "ok" if state.alive() else "stale"}
             elif self.path == "/readyz":

@@ -27,6 +27,30 @@ def client(fake_redis):
     app.dependency_overrides.clear()
 
 
+def count(client, status):
+    line = (
+        'http_server_request_duration_seconds_count{http_request_method="GET",'
+        f'http_response_status_code="{status}",http_route="/search"}}'
+    )
+    for row in client.get("/metrics").text.splitlines():
+        if row.startswith(line):
+            return float(row.rsplit(" ", 1)[1])
+    return 0.0
+
+
+def test_metrics_count_search_requests_by_status(client):
+    before_ok, before_bad = count(client, 200), count(client, 400)
+    client.get("/search", params={"q": "mouse"})
+    client.get("/search", params={"q": "the"})
+    assert count(client, 200) == before_ok + 1
+    assert count(client, 400) == before_bad + 1
+
+
+def test_metrics_ignore_probes(client):
+    client.get("/healthz")
+    assert 'http_route="/healthz"' not in client.get("/metrics").text
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
