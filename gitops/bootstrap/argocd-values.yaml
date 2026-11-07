@@ -2,7 +2,7 @@
 # scripts/bootstrap-gitops.sh applies this and the root Application.
 dex: {enabled: false}
 notifications: {enabled: false}
-applicationSet: {enabled: false}
+applicationSet: {replicas: 0}
 
 configs:
   params:

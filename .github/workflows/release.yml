@@ -1,0 +1,195 @@
+name: release
+
+# Per changed service: test, build, scan, SBOM. On main also push, sign, attest,
+# and open a pull request that moves the image in gitops/. ArgoCD and the canary
+# take it from there, with no manual step.
+
+on:
+  push:
+    branches: [main]
+    paths: ["services/**", ".github/workflows/release.yml"]
+  pull_request:
+    paths: ["services/**", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/incidentlens
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          all='gateway search-api catalog indexer'
+          case "$EVENT" in
+            pull_request) range="$BASE...HEAD" ;;
+            push) range="$BEFORE..HEAD" ;;
+            *) range="" ;;
+          esac
+          if [ -z "$range" ] || ! files=$(git diff --name-only "$range"); then
+            selected=$all # manual run, or a first push with no usable base
+          elif grep -q '^.github/workflows/release.yml$' <<<"$files"; then
+            selected=$all
+          else
+            selected=$(for s in $all; do grep -q "^services/$s/" <<<"$files" && echo "$s"; done || true)
+          fi
+          json=$(printf '%s\n' $selected | jq -Rcn '[inputs | select(length > 0)]')
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+          echo "services: $json"
+
+  image:
+    name: image (${{ matrix.service }})
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # keyless cosign signature, bound to this workflow on main
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Lint and unit test
+        uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          target: test
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          target: runtime
+          load: true
+          tags: scan/${{ matrix.service }}:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      - name: Trivy scan (fail on critical)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan/${{ matrix.service }}:${{ github.sha }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true # a finding nobody can act on should not stop a release
+          format: table
+
+      - name: SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: scan/${{ matrix.service }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom.spdx.json
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push
+        if: env.PUBLISH == 'true'
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          target: runtime
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:sha-${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          provenance: false
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        if: env.PUBLISH == 'true'
+        with:
+          cosign-release: v3.1.4
+
+      - name: Sign and attest the SBOM
+        if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          image="$IMAGE_PREFIX/$SERVICE@$DIGEST"
+          cosign sign --yes "$image"
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$image"
+          mkdir -p released
+          printf 'sha-%s %s\n' "$GITHUB_SHA" "$DIGEST" > "released/$SERVICE"
+
+      - uses: actions/upload-artifact@v7
+        if: env.PUBLISH == 'true'
+        with:
+          name: released-${{ matrix.service }}
+          path: released/${{ matrix.service }}
+
+  bump:
+    name: update gitops
+    needs: [changes, image]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: released-*
+          merge-multiple: true
+          path: released
+      - name: Open and merge the release pull request
+        run: |
+          for file in released/*; do
+            service=$(basename "$file")
+            read -r tag digest < "$file"
+            values="gitops/charts/$service/values.yaml"
+            sed -i -E "s|^  tag: .*|  tag: $tag|; s|^  digest: .*|  digest: \"$digest\"|" "$values"
+            grep -q "digest: \"$digest\"" "$values"
+          done
+          git diff --quiet && { echo "gitops already up to date"; exit 0; }
+
+          branch="release/${GITHUB_SHA::12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Release ${GITHUB_SHA::12}: $(ls released | paste -sd, -)"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --fill
+          # Tests, scan and signature already passed for exactly these digests.
+          # The canary is the next gate, and it does not need a human either.
+          gh pr merge "$branch" --squash --delete-branch

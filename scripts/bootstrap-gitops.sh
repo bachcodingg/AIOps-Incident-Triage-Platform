@@ -14,7 +14,7 @@ CONTEXT="${CONTEXT:-kind-incidentlens}"
 KUBECTL="${KUBECTL:-kubectl}"
 HELM="${HELM:-helm}"
 REPO_URL="${REPO_URL:-https://github.com/bachcodingg/AIOps-Incident-Triage-Platform.git}"
-ARGOCD_CHART_VERSION="${ARGOCD_CHART_VERSION:-4.38.0}"
+ARGOCD_CHART_VERSION="${ARGOCD_CHART_VERSION:-10.14.0}"
 
 cd "$(dirname "$0")/.."
 
@@ -26,6 +26,12 @@ if git rev-parse --verify --quiet "origin/$REVISION" >/dev/null; then
 else
   echo "warning: origin/$REVISION does not exist; ArgoCD cannot sync until it is pushed" >&2
 fi
+
+# Loading images right before this can stall a small node's API server for a while.
+for _ in $(seq 1 30); do
+  "$KUBECTL" --context "$CONTEXT" get namespace default --request-timeout=10s >/dev/null 2>&1 && break
+  sleep 5
+done
 
 "$HELM" upgrade --install argocd argo-cd \
   --repo https://argoproj.github.io/argo-helm \
