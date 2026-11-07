@@ -87,7 +87,7 @@ endif
 # --- targets ------------------------------------------------------------------
 .PHONY: help
 help: ## Show this help
-	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: tools
 tools: $(TOOL_DEPS) ## Download kind, kubectl and helm if missing

@@ -28,7 +28,7 @@ fi
 
 echo "==> terragrunt destroy"
 (cd infra/live/aws && "$TERRAGRUNT" run --all --non-interactive \
-  --queue-exclude-dir state --queue-exclude-dir budget --queue-exclude-dir ci \
-  -- destroy -auto-approve)
+  --filter '!./state' --filter '!./budget' --filter '!./ci' \
+  -- destroy)
 
 scripts/verify-destroyed.sh
