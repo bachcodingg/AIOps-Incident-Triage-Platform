@@ -1,0 +1,5 @@
+apiVersion: v2
+name: service-lib
+description: Shared templates for the ShopSearch services, so every service gets the same delivery contract.
+type: library
+version: 0.1.0

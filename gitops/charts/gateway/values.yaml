@@ -1,0 +1,57 @@
+image:
+  repository: ghcr.io/bachcodingg/incidentlens/gateway
+  tag: unreleased # release.yml opens the pull request that updates tag and digest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+runAsUser: 1000 # the `node` user of the base image
+
+containerPort: {name: http, port: 8080}
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8080
+  nodePort: null
+
+env:
+  SEARCH_API_URL: http://search-api:8000
+  CATALOG_URL: http://catalog:8080
+  FAULT_ERROR_RATE: "0" # chaos flag for fault F02
+
+extraEnv: []
+
+readinessProbe:
+  httpGet: {path: /readyz, port: http}
+  periodSeconds: 5
+livenessProbe:
+  httpGet: {path: /healthz, port: http}
+  periodSeconds: 10
+
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 160Mi}
+
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilization: 70
+
+rollout:
+  pauseSeconds: 60
+  progressDeadlineSeconds: 300
+
+metrics:
+  path: /metrics
+
+analysis:
+  mode: http
+  prometheusAddress: http://prometheus-operated.monitoring.svc:9090
+  initialDelay: 45s
+  interval: 30s
+  requestsMetric: http_server_request_duration_seconds_count
+  bucketMetric: http_server_request_duration_seconds_bucket
+  errorMatcher: http_response_status_code=~"5.."
+  maxErrorRateIncrease: 0.01
+  maxP95Seconds: 0.3 # the latency SLO
+  maxP95IncreaseSeconds: 0.1

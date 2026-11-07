@@ -1,0 +1,10 @@
+# EKS, for recorded sessions. `make destroy` removes the load balancer and the
+# volume before Terraform runs, because Terraform does not know about them.
+workload:
+  gateway:
+    values:
+      service: {type: LoadBalancer}
+  postgres:
+    values:
+      storage: {className: gp3}
+      storageClass: {create: true, name: gp3}

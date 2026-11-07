@@ -1,0 +1,34 @@
+{{- if .Values.storageClass.create }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storageClass.name }}
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+---
+{{- end }}
+# The operator creates the `postgres-rw` Service and the `postgres-app` secret
+# with a generated password, so there is no secret to bootstrap by hand.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: shopsearch}
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ .Values.image }}
+  bootstrap:
+    initdb:
+      database: catalog
+      owner: catalog
+  storage:
+    size: {{ .Values.storage.size }}
+    {{- with .Values.storage.className }}
+    storageClass: {{ . }}
+    {{- end }}
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}

@@ -1,0 +1,49 @@
+image:
+  repository: ghcr.io/bachcodingg/incidentlens/indexer
+  tag: unreleased # release.yml opens the pull request that updates tag and digest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+runAsUser: 10001
+
+containerPort: {name: health, port: 8081}
+
+# A worker: nothing connects to it, so it has no Service.
+service:
+  enabled: false
+
+env:
+  REDIS_URL: redis://redis:6379/0
+  CATALOG_URL: http://catalog:8080
+
+extraEnv: []
+
+readinessProbe:
+  httpGet: {path: /readyz, port: health}
+  periodSeconds: 5
+livenessProbe:
+  httpGet: {path: /healthz, port: health}
+  periodSeconds: 10
+
+resources:
+  requests: {cpu: 25m, memory: 48Mi}
+  limits: {cpu: 250m, memory: 128Mi}
+
+# BRPOP hands each event to exactly one consumer, so extra replicas are safe.
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilization: 70
+
+rollout:
+  pauseSeconds: 60
+  progressDeadlineSeconds: 300
+
+metrics:
+  path: /metrics
+
+analysis:
+  mode: worker
+  prometheusAddress: http://prometheus-operated.monitoring.svc:9090
+  initialDelay: 45s
+  interval: 30s

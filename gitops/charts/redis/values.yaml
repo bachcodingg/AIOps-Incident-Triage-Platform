@@ -1,0 +1,7 @@
+image:
+  repository: redis
+  tag: 8.2-alpine
+
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 250m, memory: 128Mi}

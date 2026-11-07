@@ -1,0 +1,31 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-signatures
+  annotations:
+    policies.kyverno.io/description: Only images signed by the release workflow on main can run.
+spec:
+  background: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: signed-by-the-release-workflow
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [shopsearch]
+      verifyImages:
+        - imageReferences:
+            - {{ .Values.signedImages | quote }}
+          failureAction: Enforce
+          # release.yml writes the digest into Git, so the pod spec already pins it.
+          mutateDigest: false
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: {{ .Values.signer.issuer | quote }}
+                    subject: {{ .Values.signer.subject | quote }}
+                    rekor:
+                      url: https://rekor.sigstore.dev

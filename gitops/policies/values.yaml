@@ -1,0 +1,15 @@
+# Images built by release.yml. Only these may be signed by that workflow.
+signedImages: ghcr.io/bachcodingg/incidentlens/*
+signer:
+  issuer: https://token.actions.githubusercontent.com
+  subject: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/.github/workflows/release.yml@refs/heads/main
+
+# Third-party images the namespace may run.
+allowedImages:
+  - ghcr.io/cloudnative-pg/*
+  - redis:*
+  - grafana/k6:*
+
+# `make up` builds images locally, so they cannot be signed. Only the kind
+# environment sets this, and only for the incidentlens/ prefix.
+allowLocalImages: false
