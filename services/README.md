@@ -3,12 +3,16 @@
 The workload IncidentLens breaks and repairs. Four small services so failures
 cascade and traces have more than one hop.
 
-| Service | Stack | Port | Health | API |
-|---|---|---|---|---|
-| `gateway` | TypeScript, Node 24, Fastify | 8080 | `/healthz`, `/readyz` | `GET /api/search?q=&limit=`, `GET /api/products/{id}` |
-| `search-api` | Python 3.12, FastAPI | 8000 | `/healthz`, `/readyz` (pings Redis) | `GET /search?q=&limit=` |
-| `catalog` | Java 21, Quarkus, Panache, Flyway | 8080 | `/q/health/live`, `/q/health/ready` (DB) | `GET/POST /products`, `GET/PUT/DELETE /products/{id}` |
-| `indexer` | Python 3.12 worker | 8081 | `/healthz` (heartbeat), `/readyz` (first reindex done) | none |
+| Service | Stack | Port | Health | Metrics | API |
+|---|---|---|---|---|---|
+| `gateway` | TypeScript, Node 24, Fastify | 8080 | `/healthz`, `/readyz` | `/metrics` | `GET /api/search?q=&limit=`, `GET /api/products/{id}` |
+| `search-api` | Python 3.12, FastAPI | 8000 | `/healthz`, `/readyz` (pings Redis) | `/metrics` | `GET /search?q=&limit=` |
+| `catalog` | Java 21, Quarkus, Panache, Flyway | 8080 | `/q/health/live`, `/q/health/ready` (DB) | `/q/metrics` | `GET/POST /products`, `GET/PUT/DELETE /products/{id}` |
+| `indexer` | Python 3.12 worker | 8081 | `/healthz` (heartbeat), `/readyz` (first reindex done) | `/metrics` | none |
+
+Metrics feed canary analysis ([gitops/README.md](../gitops/README.md#canary-analysis)).
+`FAULT_ERROR_RATE` on the gateway (0 to 1) answers that share of API requests with
+a 500, which is fault F02 and how automatic rollback is tested.
 
 ## Contracts between services
 
