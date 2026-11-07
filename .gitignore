@@ -20,3 +20,12 @@ venv/
 .vscode/
 *.iml
 .DS_Store
+
+# Terraform: modules are libraries, so their lock files are not pinned here
+infra/modules/**/.terraform.lock.hcl
+.terragrunt-cache/
+
+# Helm dependencies are built from the charts next to them
+gitops/charts/*/charts/
+gitops/charts/*/Chart.lock
+gitops/policies/tests/rendered.yaml
