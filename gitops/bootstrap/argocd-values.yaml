@@ -7,6 +7,12 @@ applicationSet: {replicas: 0}
 configs:
   params:
     server.insecure: true
+    # Helm renders are what spike memory and CPU. On a small node, doing them
+    # a few at a time is slower and stops the node from going NotReady.
+    reposerver.parallelism.limit: 2
+    controller.status.processors: 5
+    controller.operation.processors: 3
+    controller.kubectl.parallelism.limit: 5
   cm:
     timeout.reconciliation: 60s
     # Argo CD dropped the health check for Application in 1.8. Without it a sync
@@ -25,8 +31,8 @@ configs:
 
 controller:
   resources:
-    requests: {cpu: 100m, memory: 192Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi} # it caches every resource it manages; OOMKilled at 512Mi
 
 repoServer:
   resources:

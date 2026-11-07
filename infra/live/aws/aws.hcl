@@ -1,7 +1,7 @@
 # Shared by every AWS unit: provider, default tags and the environment's values.
 locals {
-  name       = "incidentlens"
-  region     = get_env("AWS_REGION", "eu-central-1")
+  name   = "incidentlens"
+  region = get_env("AWS_REGION", "eu-central-1")
   # From the environment, not get_aws_account_id(): CI validates this file
   # without AWS credentials. The Makefile sets it for real cloud commands.
   account_id = get_env("AWS_ACCOUNT_ID")
