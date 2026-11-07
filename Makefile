@@ -10,6 +10,9 @@ CLUSTER   ?= incidentlens
 NAMESPACE ?= shopsearch
 TAG       ?= dev
 SERVICES  := gateway search-api catalog indexer
+# Host port for the gateway. Fixed when the cluster is created: change it
+# with `make down` and then `make up HOST_PORT=...`.
+HOST_PORT ?= 8080
 
 KIND_VERSION    ?= v0.33.0
 KUBECTL_VERSION ?= v1.37.2
@@ -86,7 +89,9 @@ cluster: tools ## Create the kind cluster if it does not exist
 	@if $(KIND) get clusters 2>/dev/null | grep -qx '$(CLUSTER)'; then \
 	  echo "kind cluster $(CLUSTER) already exists"; \
 	else \
-	  $(KIND) create cluster --name $(CLUSTER) --config infra/kind/cluster.yaml --wait 120s; \
+	  mkdir -p .bin; \
+	  sed 's/hostPort: 8080/hostPort: $(HOST_PORT)/' infra/kind/cluster.yaml > .bin/kind-cluster.yaml; \
+	  $(KIND) create cluster --name $(CLUSTER) --config .bin/kind-cluster.yaml --wait 120s; \
 	fi
 
 .PHONY: load
@@ -121,7 +126,7 @@ up: ## Create cluster, build, load, deploy and smoke test everything
 	  $(MAKE) --no-print-directory wait; \
 	fi; \
 	$(MAKE) --no-print-directory smoke; \
-	echo "make up finished in $$(( $$(date +%s) - start ))s. Gateway: http://localhost:8080"
+	echo "make up finished in $$(( $$(date +%s) - start ))s. Gateway: http://localhost:$(HOST_PORT)"
 
 .PHONY: wait
 wait: tools
@@ -136,7 +141,7 @@ redeploy: build load ## Rebuild images and restart the workloads
 
 .PHONY: smoke
 smoke: tools ## End-to-end check through the gateway, including the indexer queue
-	KUBECTL=$(KUBECTL) CONTEXT="kind-$(CLUSTER)" NAMESPACE="$(NAMESPACE)" scripts/smoke.sh
+	GATEWAY="http://localhost:$(HOST_PORT)" KUBECTL=$(KUBECTL) CONTEXT="kind-$(CLUSTER)" NAMESPACE="$(NAMESPACE)" scripts/smoke.sh
 
 .PHONY: status
 status: tools ## Show pods
