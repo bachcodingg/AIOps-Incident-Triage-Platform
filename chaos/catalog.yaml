@@ -17,7 +17,7 @@ faults:
 
   - id: F02
     name: Bad release, 5% HTTP 500
-    inject: {kind: bad-release, how: "image with FAULT_ERROR_RATE flag on"}
+    inject: {kind: bad-release, how: "image with FAULT_ERROR_RATE flag on"}  # gateway has it; the others in week 5
     targets: [gateway, search-api, catalog]
     intensities: [0.02, 0.05, 0.10]
     root_cause: {component: "<target>", category: bad-release}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: search-api
+description: Query parsing, typo correction and ranking for ShopSearch.
+type: application
+version: 0.1.0
+dependencies:
+  - name: service-lib
+    version: 0.1.0
+    repository: file://../service-lib

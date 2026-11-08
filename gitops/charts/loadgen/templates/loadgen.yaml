@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadgen
+  labels: {app.kubernetes.io/name: loadgen}
+data:
+  script.js: |
+    import http from "k6/http";
+
+    // Week 3 baseline. Week 4 replaces this with the daily traffic curve.
+    export const options = {
+      discardResponseBodies: true,
+      // kube-proxy balances per connection. With keep-alive every request would
+      // stay on an old pod, and a healthy canary would look like it had no traffic.
+      noConnectionReuse: true,
+      scenarios: {
+        steady: {
+          executor: "constant-arrival-rate",
+          rate: {{ .Values.ratePerSecond }},
+          timeUnit: "1s",
+          duration: "87600h",
+          preAllocatedVUs: 5,
+          maxVUs: 20,
+        },
+      },
+    };
+
+    const queries = ["laptop", "gaming laptop", "wireless mouse", "lapotp", "phone"];
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+    // Each service is called directly as well as through the gateway. The gateway
+    // keeps connections open to its upstreams, so it alone would not reach a canary.
+    export default function () {
+      const id = 1 + Math.floor(Math.random() * 10);
+      const q = encodeURIComponent(pick(queries));
+      const url = pick([
+        `{{ .Values.targets.gateway }}/api/search?q=${q}`,
+        `{{ .Values.targets.gateway }}/api/products/${id}`,
+        `{{ .Values.targets.searchApi }}/search?q=${q}`,
+        `{{ .Values.targets.catalog }}/products/${id}`,
+      ]);
+      http.get(url);
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels: {app.kubernetes.io/name: loadgen}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: loadgen}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: loadgen, app.kubernetes.io/part-of: shopsearch}
+      annotations:
+        checksum/script: {{ .Values | toJson | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 12345 # the `k6` user of the base image
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          args: ["run", "--quiet", "--summary-mode=disabled", "--no-thresholds", "/scripts/script.js"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: script, mountPath: /scripts}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: script
+          configMap: {name: loadgen}
+        - name: tmp
+          emptyDir: {}

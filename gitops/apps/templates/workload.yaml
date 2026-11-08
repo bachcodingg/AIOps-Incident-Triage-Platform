@@ -1,0 +1,38 @@
+{{- range $name, $app := .Values.workload }}
+{{- $values := deepCopy (default dict $app.values) }}
+{{- if and $.Values.localImages $app.image }}
+{{- $_ := set $values "image" (dict "repository" (printf "incidentlens/%s" $name) "tag" "dev" "digest" "" "pullPolicy" "Never") }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $app.wave | quote }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $.Values.workloadNamespace }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.revision }}
+    path: gitops/charts/{{ $name }}
+    helm:
+      releaseName: {{ $name }}
+      valuesObject:
+        {{- toYaml $values | nindent 8 }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: {duration: 10s, factor: 2, maxDuration: 3m}
+{{- end }}

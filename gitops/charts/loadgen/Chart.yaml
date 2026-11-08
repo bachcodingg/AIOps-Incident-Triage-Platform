@@ -1,0 +1,5 @@
+apiVersion: v2
+name: loadgen
+description: Constant background traffic with k6, so canary analysis has requests to judge.
+type: application
+version: 0.1.0

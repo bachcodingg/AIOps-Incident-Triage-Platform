@@ -1,0 +1,5 @@
+apiVersion: v2
+name: postgres
+description: PostgreSQL for the catalog, run by the CloudNativePG operator.
+type: application
+version: 0.1.0

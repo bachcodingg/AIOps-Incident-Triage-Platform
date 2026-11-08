@@ -1,0 +1,18 @@
+# Local cluster: one replica each to fit the laptop, and the gateway on the
+# NodePort that infra/kind/cluster.yaml maps to the host.
+addons:
+  metrics-server:
+    values:
+      args: ["--kubelet-insecure-tls"] # kind's kubelet certificates have no IP SANs
+
+workload:
+  gateway:
+    values:
+      service: {type: NodePort, nodePort: 30080}
+      autoscaling: {minReplicas: 1}
+  search-api:
+    values:
+      autoscaling: {minReplicas: 1}
+  catalog:
+    values:
+      autoscaling: {minReplicas: 1}

@@ -1,0 +1,41 @@
+# `make gitops-lint` renders the chart next to this file and runs `kyverno test`.
+# verify-signatures is proved against the real registry in scripts/canary-test.sh.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: shopsearch-policies
+policies:
+  - rendered.yaml
+resources:
+  - pods.yaml
+results:
+  - policy: require-limits
+    rule: containers-have-cpu-and-memory-limits
+    kind: Pod
+    resources: [shopsearch/good, shopsearch/latest-tag]
+    result: pass
+  - policy: require-limits
+    rule: containers-have-cpu-and-memory-limits
+    kind: Pod
+    resources: [shopsearch/no-limits, shopsearch/memory-limit-only, shopsearch/init-without-limits]
+    result: fail
+  - policy: disallow-latest
+    rule: images-have-a-fixed-tag
+    kind: Pod
+    resources: [shopsearch/good]
+    result: pass
+  - policy: disallow-latest
+    rule: images-have-a-fixed-tag
+    kind: Pod
+    resources: [shopsearch/latest-tag, shopsearch/no-tag]
+    result: fail
+  - policy: restrict-registries
+    rule: images-come-from-the-allow-list
+    kind: Pod
+    resources: [shopsearch/good]
+    result: pass
+  - policy: restrict-registries
+    rule: images-come-from-the-allow-list
+    kind: Pod
+    resources: [shopsearch/unknown-registry]
+    result: fail

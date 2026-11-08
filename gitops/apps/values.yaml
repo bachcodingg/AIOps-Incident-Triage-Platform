@@ -1,0 +1,118 @@
+repoURL: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform.git
+revision: main
+
+# Set by `make up`: run images built on this machine, not the released ones.
+localImages: false
+
+workloadNamespace: shopsearch
+
+# Sync waves run in order, and each waits for the previous one to be healthy:
+#   -3 operators whose CRDs the workload needs
+#   -2 admission control
+#   -1 policies, before any workload pod exists
+#    0 data stores, 1 catalog, 2 what depends on it, 3 load
+addons:
+  kube-prometheus-stack:
+    enabled: true
+    wave: -3
+    namespace: monitoring
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    version: 92.22.0
+    values:
+      # Week 3 needs only Prometheus, for canary analysis. Week 4 turns on the rest.
+      alertmanager: {enabled: false}
+      grafana: {enabled: false}
+      kubeStateMetrics: {enabled: false}
+      nodeExporter: {enabled: false}
+      kubeApiServer: {enabled: false}
+      kubelet: {enabled: false}
+      kubeControllerManager: {enabled: false}
+      coreDns: {enabled: false}
+      kubeEtcd: {enabled: false}
+      kubeScheduler: {enabled: false}
+      kubeProxy: {enabled: false}
+      defaultRules: {create: false}
+      prometheusOperator:
+        admissionWebhooks: {enabled: false, patch: {enabled: false}}
+        tls: {enabled: false}
+        resources:
+          requests: {cpu: 20m, memory: 64Mi}
+          limits: {memory: 128Mi}
+      prometheus:
+        prometheusSpec:
+          retention: 6h
+          scrapeInterval: 15s
+          # Pick up monitors from every namespace, not only this chart's.
+          podMonitorSelectorNilUsesHelmValues: false
+          serviceMonitorSelectorNilUsesHelmValues: false
+          ruleSelectorNilUsesHelmValues: false
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {memory: 512Mi}
+
+  argo-rollouts:
+    enabled: true
+    wave: -3
+    namespace: argo-rollouts
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    version: 2.43.9
+    values:
+      dashboard: {enabled: false}
+      controller:
+        replicas: 1
+        resources:
+          requests: {cpu: 20m, memory: 64Mi}
+          limits: {memory: 192Mi}
+
+  cloudnative-pg:
+    enabled: true
+    wave: -3
+    namespace: cnpg-system
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    version: 0.29.1
+    values:
+      resources:
+        requests: {cpu: 20m, memory: 64Mi}
+        limits: {memory: 192Mi}
+
+  metrics-server:
+    enabled: true
+    wave: -3
+    namespace: kube-system
+    repoURL: https://kubernetes-sigs.github.io/metrics-server
+    chart: metrics-server
+    version: 3.14.0
+    values:
+      resources:
+        requests: {cpu: 20m, memory: 48Mi}
+        limits: {memory: 96Mi}
+
+  kyverno:
+    enabled: true
+    wave: -2
+    namespace: kyverno
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    version: 3.9.2
+    values:
+      admissionController:
+        replicas: 1
+        container:
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 384Mi}
+      backgroundController: {enabled: false}
+      cleanupController: {enabled: false}
+      reportsController: {enabled: false}
+
+workload:
+  redis: {wave: 0, values: {}}
+  postgres: {wave: 0, values: {}}
+  catalog: {wave: 1, image: true, values: {}}
+  search-api: {wave: 2, image: true, values: {}}
+  indexer: {wave: 2, image: true, values: {}}
+  gateway: {wave: 2, image: true, values: {}}
+  loadgen: {wave: 3, values: {}}
