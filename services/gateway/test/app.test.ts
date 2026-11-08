@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { TraceFlags, trace } from "@opentelemetry/api";
+import { MeterProvider, MetricReader } from "@opentelemetry/sdk-metrics";
 import { buildApp, type FetchFn } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
+import { DURATION_BUCKETS_SECONDS, traceFields } from "../src/metrics.js";
 
 const config = loadConfig({
   SEARCH_API_URL: "http://search-api.test",
@@ -54,28 +57,79 @@ describe("health", () => {
   });
 });
 
+// Collects whatever the app recorded, on demand, instead of exporting it.
+class TestReader extends MetricReader {
+  protected async onForceFlush(): Promise<void> {}
+  protected async onShutdown(): Promise<void> {}
+}
+
+async function makeMeteredApp(fetchFn: FetchFn) {
+  const reader = new TestReader();
+  const provider = new MeterProvider({ readers: [reader] });
+  app = await buildApp({ config, fetchFn, logger: false, meter: provider.getMeter("test") });
+  return { a: app, reader };
+}
+
+async function durationPoints(reader: TestReader) {
+  const { resourceMetrics } = await reader.collect();
+  const metric = resourceMetrics.scopeMetrics
+    .flatMap((s) => s.metrics)
+    .find((m) => m.descriptor.name === "http.server.request.duration");
+  return (metric?.dataPoints ?? []) as { attributes: Record<string, unknown>; value: { count: number; buckets: { boundaries: number[] } } }[];
+}
+
 describe("metrics", () => {
-  it("counts API requests by route and status, not probes", async () => {
+  it("records API requests by route and status, not probes", async () => {
     const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
-    const a = await makeApp(fetchFn);
+    const { a, reader } = await makeMeteredApp(fetchFn);
     await a.inject("/healthz");
     await a.inject("/api/search?q=tv");
 
-    const res = await a.inject("/metrics");
+    const points = await durationPoints(reader);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("text/plain");
-    expect(res.body).toMatch(
-      /http_server_request_duration_seconds_count\{http_request_method="GET",http_route="\/api\/search",http_response_status_code="200"\} 1/,
-    );
-    expect(res.body).not.toContain('http_route="/healthz"');
+    expect(points).toHaveLength(1);
+    expect(points[0].attributes).toEqual({
+      "http.request.method": "GET",
+      "http.route": "/api/search",
+      "http.response.status_code": 200,
+    });
+    expect(points[0].value.count).toBe(1);
+  });
+
+  it("has a bucket boundary at the 300 ms latency objective", async () => {
+    const { a, reader } = await makeMeteredApp(vi.fn<FetchFn>().mockResolvedValue(jsonResponse({})));
+    await a.inject("/api/products/1");
+    const [point] = await durationPoints(reader);
+    expect(point.value.buckets.boundaries).toEqual(DURATION_BUCKETS_SECONDS);
+    expect(DURATION_BUCKETS_SECONDS).toContain(0.3);
   });
 
   it("records rate limited requests", async () => {
     const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
-    const a = await makeApp(fetchFn);
+    const { a, reader } = await makeMeteredApp(fetchFn);
     for (let i = 0; i < 4; i++) await a.inject("/api/search?q=tv");
-    expect((await a.inject("/metrics")).body).toContain('http_response_status_code="429"');
+    const codes = (await durationPoints(reader)).map((p) => p.attributes["http.response.status_code"]);
+    expect(codes).toContain(429);
+  });
+
+  it("no longer serves a Prometheus endpoint: metrics are pushed over OTLP", async () => {
+    const a = await makeApp(vi.fn<FetchFn>());
+    expect((await a.inject("/metrics")).statusCode).toBe(404);
+  });
+});
+
+describe("log correlation", () => {
+  it("adds trace and span ids from the active span", () => {
+    const span = trace.wrapSpanContext({
+      traceId: "0af7651916cd43dd8448eb211c80319c",
+      spanId: "b7ad6b7169203331",
+      traceFlags: TraceFlags.SAMPLED,
+    });
+    expect(traceFields(span)).toEqual({ trace_id: "0af7651916cd43dd8448eb211c80319c", span_id: "b7ad6b7169203331" });
+  });
+
+  it("adds nothing outside a trace", () => {
+    expect(traceFields(undefined)).toEqual({});
   });
 });
 

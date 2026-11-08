@@ -9,6 +9,8 @@ Redis contract:
 
 A change event looks like:
   {"op": "upsert", "id": 7, "product": {...}}   or   {"op": "delete", "id": 7}
+plus an optional "traceparent" (W3C trace context) from the request that made
+the change, so applying it shows up in the same trace as the write.
 """
 
 from __future__ import annotations
@@ -18,6 +20,9 @@ import logging
 from collections.abc import Iterable
 
 import redis
+from opentelemetry import propagate, trace
+from opentelemetry.instrumentation.utils import suppress_instrumentation
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 QUEUE_KEY = "catalog:changes"
 DEAD_LETTER_KEY = "catalog:changes:dead"
@@ -26,6 +31,7 @@ VERSION_KEY = "search:version"
 INDEXED_FIELDS = ("id", "sku", "name", "description", "category", "price")
 
 log = logging.getLogger("indexer")
+tracer = trace.get_tracer("indexer")
 
 
 class InvalidChange(ValueError):
@@ -44,6 +50,11 @@ def to_doc(product: dict) -> dict:
 
 def full_reindex(client: redis.Redis, products: Iterable[dict]) -> int:
     """Replace the whole index atomically: readers see the old or the new index, never a mix."""
+    with tracer.start_as_current_span("full reindex"):
+        return _full_reindex(client, products)
+
+
+def _full_reindex(client: redis.Redis, products: Iterable[dict]) -> int:
     docs = {str(d["id"]): json.dumps(d) for d in map(to_doc, products)}
     tmp_key = f"{DOCS_KEY}:rebuild"
     pipe = client.pipeline(transaction=True)
@@ -89,10 +100,41 @@ def apply_change(client: redis.Redis, raw: str) -> bool:
         return False
 
 
+def _producer_context(raw: str):
+    """Trace context the catalog put on the event, if any. Malformed events have none."""
+    try:
+        event = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(event, dict) or not isinstance(event.get("traceparent"), str):
+        return None
+    return propagate.extract({"traceparent": event["traceparent"]})
+
+
+def process(client: redis.Redis, raw: str) -> bool:
+    """Apply one event inside a consumer span, a child of the catalog request that produced it."""
+    with tracer.start_as_current_span(
+        f"process {QUEUE_KEY}",
+        context=_producer_context(raw),
+        kind=SpanKind.CONSUMER,
+        attributes={
+            "messaging.system": "redis",
+            "messaging.destination.name": QUEUE_KEY,
+            "messaging.operation.type": "process",
+        },
+    ) as span:
+        applied = apply_change(client, raw)
+        if not applied:
+            span.set_status(Status(StatusCode.ERROR, "dead-lettered"))
+        return applied
+
+
 def consume_once(client: redis.Redis, timeout_seconds: int = 5) -> bool | None:
     """Block for at most `timeout_seconds` waiting for one event. Returns None on timeout."""
-    item = client.brpop([QUEUE_KEY], timeout=timeout_seconds)
+    # The blocking poll is not traced: idle, it would make a new trace every few seconds.
+    with suppress_instrumentation():
+        item = client.brpop([QUEUE_KEY], timeout=timeout_seconds)
     if item is None:
         return None
     _, raw = item
-    return apply_change(client, raw)
+    return process(client, raw)

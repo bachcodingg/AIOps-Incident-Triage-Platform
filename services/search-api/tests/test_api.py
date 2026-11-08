@@ -27,28 +27,69 @@ def client(fake_redis):
     app.dependency_overrides.clear()
 
 
-def count(client, status):
-    line = (
-        'http_server_request_duration_seconds_count{http_request_method="GET",'
-        f'http_response_status_code="{status}",http_route="/search"}}'
-    )
-    for row in client.get("/metrics").text.splitlines():
-        if row.startswith(line):
-            return float(row.rsplit(" ", 1)[1])
-    return 0.0
+def duration_points(reader):
+    data = reader.get_metrics_data()
+    if data is None:
+        return []
+    return [
+        point
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for metric in sm.metrics
+        if metric.name == "http.server.request.duration"
+        for point in metric.data.data_points
+    ]
 
 
-def test_metrics_count_search_requests_by_status(client):
-    before_ok, before_bad = count(client, 200), count(client, 400)
+def count(reader, status):
+    return sum(p.count for p in duration_points(reader) if p.attributes["http.response.status_code"] == status)
+
+
+def test_metrics_count_search_requests_by_status(client, metric_reader):
+    before_ok, before_bad = count(metric_reader, 200), count(metric_reader, 400)
     client.get("/search", params={"q": "mouse"})
     client.get("/search", params={"q": "the"})
-    assert count(client, 200) == before_ok + 1
-    assert count(client, 400) == before_bad + 1
+    assert count(metric_reader, 200) == before_ok + 1
+    assert count(metric_reader, 400) == before_bad + 1
 
 
-def test_metrics_ignore_probes(client):
+def test_metrics_use_semconv_names_and_slo_bucket(client, metric_reader):
+    client.get("/search", params={"q": "mouse"})
+    point = duration_points(metric_reader)[0]
+    assert {"http.request.method", "http.route", "http.response.status_code"} <= set(point.attributes)
+    assert point.attributes["http.route"] == "/search"
+    assert 0.3 in point.explicit_bounds  # the latency SLO threshold
+
+
+def test_metrics_ignore_probes(client, metric_reader):
     client.get("/healthz")
-    assert 'http_route="/healthz"' not in client.get("/metrics").text
+    client.get("/readyz")
+    assert all(p.attributes.get("http.route") not in {"/healthz", "/readyz"} for p in duration_points(metric_reader))
+
+
+def test_no_prometheus_endpoint(client):
+    assert client.get("/metrics").status_code == 404
+
+
+def test_json_log_lines_carry_trace_ids():
+    import json
+    import logging
+
+    from opentelemetry import trace
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    from app.telemetry import JsonFormatter
+
+    span = NonRecordingSpan(SpanContext(0x0AF7651916CD43DD8448EB211C80319C, 0xB7AD6B7169203331, False, TraceFlags(1)))
+    record = logging.LogRecord("search-api", logging.WARNING, __file__, 1, "redis %s", ("down",), None)
+    with trace.use_span(span):
+        line = json.loads(JsonFormatter().format(record))
+    assert line["msg"] == "redis down"
+    assert line["level"] == "warning"
+    assert line["trace_id"] == "0af7651916cd43dd8448eb211c80319c"
+    assert line["span_id"] == "b7ad6b7169203331"
+
+    assert "trace_id" not in json.loads(JsonFormatter().format(record))
 
 
 def test_healthz(client):

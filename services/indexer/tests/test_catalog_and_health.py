@@ -2,7 +2,7 @@ import json
 import urllib.request
 
 from indexer.catalog_client import fetch_all_products
-from indexer.health import CHANGES, HealthState, serve
+from indexer.health import HealthState, serve
 
 
 def test_fetch_all_products_pages_until_short_page():
@@ -42,16 +42,11 @@ def get(port, path):
         return err.code, json.load(err)
 
 
-def test_health_server_exposes_metrics():
-    state = HealthState()
-    server = serve(state, port=0)
-    port = server.server_address[1]
+def test_health_server_has_no_metrics_endpoint():
+    # Metrics are pushed over OTLP now.
+    server = serve(HealthState(), port=0)
     try:
-        CHANGES.labels("applied").inc()
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2) as res:
-            body = res.read().decode()
-        assert res.status == 200
-        assert 'indexer_changes_total{outcome="applied"}' in body
+        assert get(server.server_address[1], "/metrics")[0] == 404
     finally:
         server.shutdown()
 

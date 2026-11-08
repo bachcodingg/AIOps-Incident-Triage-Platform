@@ -2,6 +2,8 @@ package dev.incidentlens.catalog;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.Context;
 import io.quarkus.redis.datasource.RedisDataSource;
 import io.quarkus.redis.datasource.list.ListCommands;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -15,6 +17,9 @@ import org.jboss.logging.Logger;
  * Called after the database transaction commits. If Redis is down the write
  * still succeeds and the search index goes stale until the indexer's next
  * full reindex; that trade-off is deliberate and is fault F10 in the catalog.
+ *
+ * Each event carries the W3C traceparent of the request that made the change,
+ * so the indexer applies it in the same trace.
  */
 @ApplicationScoped
 public class ChangePublisher {
@@ -39,10 +44,15 @@ public class ChangePublisher {
     }
 
     public void deleted(long id) {
-        push(Map.of("op", "delete", "id", id));
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("op", "delete");
+        event.put("id", id);
+        push(event);
     }
 
     private void push(Map<String, Object> event) {
+        // Adds "traceparent" when there is an active span, nothing otherwise.
+        W3CTraceContextPropagator.getInstance().inject(Context.current(), event, Map::put);
         try {
             queue.lpush(QUEUE_KEY, mapper.writeValueAsString(event));
         } catch (JsonProcessingException e) {

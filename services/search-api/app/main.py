@@ -3,26 +3,40 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from functools import lru_cache
 from typing import Annotated
 
 import redis
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from .metrics import track_request
+from . import telemetry
 from .search import search, tokenize
 from .store import RedisStore, Store
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+telemetry.configure_logging()
+telemetry.configure()
 log = logging.getLogger("search-api")
 
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "60"))
 
-app = FastAPI(title="search-api", version="0.1.0")
-app.middleware("http")(track_request)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    telemetry.shutdown()  # flush spans and metrics still buffered
+
+
+# Native FastAPI telemetry: probes stay out of traces and metrics. Dependency
+# and serialisation spans are off, so a trace shows the request and its Redis calls.
+app = FastAPI(
+    title="search-api",
+    version="0.1.0",
+    lifespan=lifespan,
+    telemetry={"exclude": telemetry.is_probe, "operation_spans": False},
+)
 
 
 @lru_cache
@@ -45,11 +59,6 @@ def readyz(store: StoreDep):
     if not store.ping():
         return JSONResponse({"status": "redis_unavailable"}, status_code=503)
     return {"status": "ready"}
-
-
-@app.get("/metrics", include_in_schema=False)
-def metrics() -> Response:
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/search")
