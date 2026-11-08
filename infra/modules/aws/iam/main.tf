@@ -4,7 +4,7 @@
 locals {
   service_accounts = {
     external-secrets = { namespace = "external-secrets", service_account = "external-secrets" }
-    loki             = { namespace = "observability", service_account = "loki" }
+    loki             = { namespace = "monitoring", service_account = "loki" }
     remediator       = { namespace = "aiops", service_account = "remediator" }
   }
 

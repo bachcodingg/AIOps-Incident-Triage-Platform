@@ -6,11 +6,21 @@ localImages: false
 
 workloadNamespace: shopsearch
 
+# Created by the root app itself, before every wave (values-aws.yaml turns it on).
+storageClass:
+  create: false
+  name: gp3
+
 # Sync waves run in order, and each waits for the previous one to be healthy:
 #   -3 operators whose CRDs the workload needs
-#   -2 admission control
-#   -1 policies, before any workload pod exists
+#   -2 admission control, and the telemetry backends
+#   -1 policies, before any workload pod exists; SLO rules and dashboards
 #    0 data stores, 1 catalog, 2 what depends on it, 3 load
+#
+# Telemetry path (gitops/README.md#observability):
+#   service --OTLP--> otel-agent (DaemonSet, same node) --OTLP--> otel-gateway
+#   otel-gateway --> Prometheus (metrics, OTLP receiver), Tempo (traces), Loki (logs)
+#   otel-agent also reads container stdout from the node, so logs need no SDK.
 addons:
   kube-prometheus-stack:
     enabled: true
@@ -20,36 +30,379 @@ addons:
     chart: kube-prometheus-stack
     version: 92.22.0
     values:
-      # Week 3 needs only Prometheus, for canary analysis. Week 4 turns on the rest.
-      alertmanager: {enabled: false}
-      grafana: {enabled: false}
-      kubeStateMetrics: {enabled: false}
-      nodeExporter: {enabled: false}
+      # Control-plane components kind and managed clusters do not expose.
       kubeApiServer: {enabled: false}
-      kubelet: {enabled: false}
       kubeControllerManager: {enabled: false}
-      coreDns: {enabled: false}
       kubeEtcd: {enabled: false}
       kubeScheduler: {enabled: false}
       kubeProxy: {enabled: false}
-      defaultRules: {create: false}
+      coreDns: {enabled: false}
+      defaultRules:
+        create: true
+        rules:
+          etcd: false
+          kubeApiserverAvailability: false
+          kubeApiserverBurnrate: false
+          kubeApiserverHistogram: false
+          kubeApiserverSlos: false
+          kubeControllerManager: false
+          kubeProxy: false
+          kubeSchedulerAlerting: false
+          kubeSchedulerRecording: false
+          kubernetesSystem: false
+          windows: false
+      windowsMonitoring: {enabled: false}
       prometheusOperator:
         admissionWebhooks: {enabled: false, patch: {enabled: false}}
         tls: {enabled: false}
         resources:
           requests: {cpu: 20m, memory: 64Mi}
-          limits: {memory: 128Mi}
+          limits: {memory: 192Mi}
+      kube-state-metrics:
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 96Mi}
+      prometheus-node-exporter:
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 48Mi}
       prometheus:
         prometheusSpec:
-          retention: 6h
+          # Long enough for the 3-day ticket window and the 72 h dataset (week 6).
+          retention: 7d
+          retentionSize: 4GB
           scrapeInterval: 15s
-          # Pick up monitors from every namespace, not only this chart's.
+          storageSpec:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources: {requests: {storage: 5Gi}}
+          # Pick up monitors and rules from every namespace, not only this chart's.
           podMonitorSelectorNilUsesHelmValues: false
           serviceMonitorSelectorNilUsesHelmValues: false
           ruleSelectorNilUsesHelmValues: false
+          # The services push metrics over OTLP through the collector.
+          enableOTLPReceiver: true
+          otlp:
+            # Resource attributes kept as labels. job and instance come from
+            # service.namespace/service.name and service.instance.id.
+            promoteResourceAttributes:
+              - k8s.namespace.name
+              - k8s.pod.name
+              - k8s.node.name
+              - rollouts_pod_template_hash # canary vs stable, see service-lib.otelEnv
+          tsdb:
+            outOfOrderTimeWindow: 5m # batched OTLP pushes can arrive slightly out of order
+          # Tempo's metrics generator remote-writes the service graph.
+          enableRemoteWriteReceiver: true
+          # Exemplars link a latency bucket to a trace that fell into it.
+          enableFeatures: [exemplar-storage]
+          exemplars: {maxSize: 100000}
           resources:
-            requests: {cpu: 50m, memory: 192Mi}
-            limits: {memory: 512Mi}
+            requests: {cpu: 100m, memory: 384Mi}
+            limits: {memory: 1Gi}
+      alertmanager:
+        alertmanagerSpec:
+          # Routing lives in gitops/observability (AlertmanagerConfig), so alerts
+          # need no namespace label to match it.
+          alertmanagerConfigSelector:
+            matchLabels: {app.kubernetes.io/part-of: incidentlens}
+          alertmanagerConfigNamespaceSelector: {}
+          alertmanagerConfigMatcherStrategy: {type: None}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 96Mi}
+      grafana:
+        # scripts/bootstrap-gitops.sh creates this secret with a random password,
+        # so no credential is stored in Git. `make grafana` prints it.
+        admin: {existingSecret: grafana-admin}
+        grafana.ini:
+          auth.anonymous: {enabled: true, org_role: Viewer}
+          analytics: {reporting_enabled: false, check_for_updates: false}
+        defaultDashboardsTimezone: browser
+        sidecar:
+          dashboards:
+            folderAnnotation: grafana_folder
+            provider: {foldersFromFilesStructure: true}
+          datasources:
+            # Exemplars on latency panels open the trace in Tempo.
+            exemplarTraceIdDestinations:
+              datasourceUid: tempo
+              traceIdLabelName: trace_id
+              urlDisplayLabel: Trace
+        # `$$` is a literal `$` in Grafana provisioning files.
+        additionalDataSources:
+          - name: Tempo
+            uid: tempo
+            type: tempo
+            access: proxy
+            url: http://tempo.monitoring.svc:3200
+            jsonData:
+              serviceMap: {datasourceUid: prometheus}
+              nodeGraph: {enabled: true}
+              search: {hide: false}
+              tracesToLogsV2:
+                datasourceUid: loki
+                spanStartTimeShift: -5m
+                spanEndTimeShift: 5m
+                customQuery: true
+                query: '{service_name="$${__span.tags["service.name"]}"} | trace_id="$${__trace.traceId}"'
+              tracesToMetrics:
+                datasourceUid: prometheus
+                spanStartTimeShift: -10m
+                spanEndTimeShift: 10m
+                tags: [{key: service.name, value: service_name}]
+                queries:
+                  - name: Request rate
+                    query: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/$${__span.tags["service.name"]}"}[1m])) by (http_route)
+          - name: Loki
+            uid: loki
+            type: loki
+            access: proxy
+            url: http://loki.monitoring.svc:3100
+            jsonData:
+              # trace_id is structured metadata on every log line, not part of the text.
+              derivedFields:
+                - name: Trace
+                  matcherType: label
+                  matcherRegex: trace_id
+                  datasourceUid: tempo
+                  url: "$${__value.raw}"
+        resources:
+          requests: {cpu: 20m, memory: 128Mi}
+          limits: {memory: 320Mi}
+
+  loki:
+    enabled: true
+    wave: -2
+    namespace: monitoring
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki
+    version: 7.5.0
+    values:
+      deploymentMode: SingleBinary
+      loki:
+        auth_enabled: false
+        commonConfig: {replication_factor: 1}
+        storage: {type: filesystem}
+        schemaConfig:
+          configs:
+            - from: "2024-04-01"
+              store: tsdb
+              object_store: filesystem
+              schema: v13
+              index: {prefix: loki_index_, period: 24h}
+        limits_config:
+          allow_structured_metadata: true
+          retention_period: 168h
+          volume_enabled: true
+        compactor:
+          retention_enabled: true
+          delete_request_store: filesystem
+        pattern_ingester: {enabled: false}
+      singleBinary:
+        replicas: 1
+        persistence: {size: 5Gi}
+        resources:
+          requests: {cpu: 50m, memory: 192Mi}
+          limits: {memory: 512Mi}
+      read: {replicas: 0}
+      write: {replicas: 0}
+      backend: {replicas: 0}
+      gateway: {enabled: false}
+      chunksCache: {enabled: false}
+      resultsCache: {enabled: false}
+      lokiCanary: {enabled: false}
+      test: {enabled: false}
+      ruler: {enabled: false}
+
+  tempo:
+    enabled: true
+    wave: -2
+    namespace: monitoring
+    repoURL: https://grafana.github.io/helm-charts
+    chart: tempo
+    version: 1.24.4
+    values:
+      fullnameOverride: tempo
+      persistence: {enabled: true, size: 5Gi}
+      tempo:
+        retention: 168h
+        reportingEnabled: false
+        receivers:
+          otlp:
+            protocols:
+              grpc: {endpoint: "0.0.0.0:4317"}
+              http: {endpoint: "0.0.0.0:4318"}
+        # The service graph (who calls whom, with rate, errors and latency per
+        # edge), written to Prometheus. The correlator uses it from week 6.
+        metricsGenerator:
+          enabled: true
+          remoteWriteUrl: http://prometheus-operated.monitoring.svc:9090/api/v1/write
+        overrides:
+          defaults:
+            metrics_generator:
+              processors: [service-graphs]
+        resources:
+          requests: {cpu: 50m, memory: 192Mi}
+          limits: {memory: 768Mi}
+
+  # SLOs as code: turns the PrometheusServiceLevel in gitops/observability into
+  # recording rules and burn-rate alerts (a PrometheusRule).
+  sloth:
+    enabled: true
+    wave: -2
+    namespace: monitoring
+    repoURL: https://slok.github.io/sloth
+    chart: sloth
+    version: 0.16.0
+    values:
+      commonPlugins: {enabled: false} # a git-sync sidecar for SLI plugins we do not use
+      resources:
+        requests: {cpu: 5m, memory: 48Mi}
+        limits: {memory: 128Mi}
+
+  otel-agent:
+    enabled: true
+    wave: -2
+    namespace: monitoring
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    version: 0.178.2
+    values:
+      fullnameOverride: otel-agent
+      mode: daemonset
+      image: {repository: otel/opentelemetry-collector-k8s}
+      # Mounts /var/log/pods; the receiver itself is configured below.
+      presets:
+        logsCollection: {enabled: true}
+      # Pods send to the agent on their own node: the Service routes node-locally.
+      service: {enabled: true, internalTrafficPolicy: Local}
+      ports:
+        otlp: {hostPort: 0}
+        otlp-http: {hostPort: 0}
+        jaeger-compact: {enabled: false}
+        jaeger-thrift: {enabled: false}
+        jaeger-grpc: {enabled: false}
+        zipkin: {enabled: false}
+      resources:
+        requests: {cpu: 20m, memory: 64Mi}
+        limits: {memory: 192Mi}
+      config:
+        receivers:
+          jaeger: null
+          zipkin: null
+          prometheus: null
+          file_log:
+            # The workload only; the platform's own logs stay with kubectl.
+            include: [/var/log/pods/shopsearch_*/*/*.log]
+            exclude: []
+            operators:
+              - {type: container, id: container-parser}
+              # The services write one JSON object per line (msg, level, trace_id, ...).
+              - type: json_parser
+                if: body matches "^\\s*\\{"
+                parse_from: body
+                parse_to: attributes
+                on_error: send_quiet
+              - type: move
+                if: attributes.msg != nil
+                from: attributes.msg
+                to: body
+              - type: severity_parser
+                if: attributes.level != nil
+                parse_from: attributes.level
+                overwrite_text: true
+                mapping:
+                  debug: [debug, DEBUG, trace, TRACE]
+                  info: [info, INFO]
+                  warn: [warn, WARN, warning, WARNING]
+                  error: [error, ERROR]
+                  fatal: [fatal, FATAL, critical, CRITICAL]
+              # Node and Python write trace_id/span_id, Quarkus traceId/spanId.
+              - type: trace_parser
+                if: attributes.trace_id != nil
+                trace_id: {parse_from: attributes.trace_id}
+                span_id: {parse_from: attributes.span_id}
+              - type: trace_parser
+                if: attributes.traceId != nil
+                trace_id: {parse_from: attributes.traceId}
+                span_id: {parse_from: attributes.spanId}
+              # The container name is the service name in every ShopSearch chart.
+              - type: copy
+                from: resource["k8s.container.name"]
+                to: resource["service.name"]
+              - type: copy
+                from: resource["k8s.namespace.name"]
+                to: resource["service.namespace"]
+        exporters:
+          otlp/gateway:
+            endpoint: otel-gateway.monitoring.svc:4317
+            tls: {insecure: true}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              processors: [memory_limiter, batch]
+              exporters: [otlp/gateway]
+            metrics:
+              receivers: [otlp]
+              processors: [memory_limiter, batch]
+              exporters: [otlp/gateway]
+            logs:
+              receivers: [otlp, file_log]
+              processors: [memory_limiter, batch]
+              exporters: [otlp/gateway]
+
+  otel-gateway:
+    enabled: true
+    wave: -2
+    namespace: monitoring
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    version: 0.178.2
+    values:
+      fullnameOverride: otel-gateway
+      mode: deployment
+      replicaCount: 1
+      image: {repository: otel/opentelemetry-collector-k8s}
+      ports:
+        jaeger-compact: {enabled: false}
+        jaeger-thrift: {enabled: false}
+        jaeger-grpc: {enabled: false}
+        zipkin: {enabled: false}
+      resources:
+        requests: {cpu: 20m, memory: 64Mi}
+        limits: {memory: 256Mi}
+      config:
+        receivers:
+          jaeger: null
+          zipkin: null
+          prometheus: null
+        exporters:
+          otlphttp/prometheus:
+            endpoint: http://prometheus-operated.monitoring.svc:9090/api/v1/otlp
+            tls: {insecure: true}
+          otlp/tempo:
+            endpoint: tempo.monitoring.svc:4317
+            tls: {insecure: true}
+          otlphttp/loki:
+            endpoint: http://loki.monitoring.svc:3100/otlp
+            tls: {insecure: true}
+        service:
+          pipelines:
+            traces:
+              receivers: [otlp]
+              processors: [memory_limiter, batch]
+              exporters: [otlp/tempo]
+            metrics:
+              receivers: [otlp]
+              processors: [memory_limiter, batch]
+              exporters: [otlphttp/prometheus]
+            logs:
+              receivers: [otlp]
+              processors: [memory_limiter, batch]
+              exporters: [otlphttp/loki]
 
   argo-rollouts:
     enabled: true

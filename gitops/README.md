@@ -8,6 +8,7 @@ installs ArgoCD and one root Application, nothing is applied by hand.
 | [`bootstrap/`](bootstrap/) | ArgoCD values: the one install that cannot come from ArgoCD |
 | [`apps/`](apps/) | app-of-apps chart, plus `values-{kind,aws,oci}.yaml` per environment |
 | [`charts/`](charts/) | one Helm chart per service, built on the shared `service-lib` library chart |
+| [`observability/`](observability/) | SLOs (Sloth), alert routing and the Grafana dashboards |
 | [`policies/`](policies/) | Kyverno admission policies and their tests |
 
 ## From commit to production
@@ -43,9 +44,10 @@ adds it back.
 
 | Wave | What | Why this early |
 |---|---|---|
+| -4 | the `gp3` StorageClass (EKS only) | Prometheus, Loki and Tempo claim volumes in the next waves |
 | -3 | kube-prometheus-stack, argo-rollouts, cloudnative-pg, metrics-server | their CRDs and APIs |
-| -2 | kyverno | must exist before any policy |
-| -1 | policies | must exist before any workload pod |
+| -2 | kyverno, loki, tempo, otel-agent, otel-gateway, sloth | admission control and the telemetry backends, before anything sends to them |
+| -1 | policies, observability | policies before any workload pod; SLOs and dashboards before the first request |
 | 0 | redis, postgres | services need them |
 | 1 | catalog | owns the schema |
 | 2 | search-api, indexer, gateway | depend on catalog |
@@ -54,8 +56,10 @@ adds it back.
 ## Canary analysis
 
 Every Rollout runs an AnalysisTemplate from the library chart. Prometheus tells
-canary and stable apart through the `rollouts-pod-template-hash` label, which the
-PodMonitor copies onto every series. For HTTP services a release fails on:
+canary and stable apart through the `rollouts_pod_template_hash` label: the chart
+hands each pod its own hash through the downward API, the SDK sends it as an
+OpenTelemetry resource attribute, and Prometheus keeps it as a label. For HTTP
+services a release fails on:
 
 | Metric | Fails when | Catches |
 |---|---|---|
@@ -67,7 +71,9 @@ PodMonitor copies onto every series. For HTTP services a release fails on:
 The last one exists because F03 adds 250 ms, which on a 5 ms service still fits
 under the SLO. An absolute threshold alone would promote that release.
 
-The indexer has no request stream, so it fails on `up` and on dead-lettered events.
+The indexer has no request stream, so it fails when it does not report
+`indexer_ready` and when it dead-letters events. Metrics are pushed, so there is
+no `up` series to check.
 
 ### Known limits
 
@@ -114,10 +120,80 @@ make canary-test    # on a running cluster: promotion, abort, admission
 
 Both run in [CI](../.github/workflows/ci.yml) on every pull request.
 
-## Deferred to week 4
+## Observability
 
-- **Alertmanager, Grafana, kube-state-metrics.** Week 3 installs
-  kube-prometheus-stack with only Prometheus enabled, because the canary needs it.
-- **External Secrets.** The IRSA role exists, but no secret needs it yet:
-  CloudNativePG generates the database password. The first real one is the
-  alert webhook.
+```mermaid
+flowchart LR
+  svc[gateway, search-api,<br/>catalog, indexer] -->|OTLP/HTTP| agent[otel-agent<br/>DaemonSet]
+  logs[(container stdout<br/>on the node)] -->|file_log| agent
+  agent -->|OTLP| gw[otel-gateway]
+  gw --> prom[(Prometheus<br/>OTLP receiver)]
+  gw --> tempo[(Tempo)]
+  gw --> loki[(Loki)]
+  tempo -->|service graph| prom
+  prom --> grafana[Grafana]
+  tempo --> grafana
+  loki --> grafana
+```
+
+| Signal | From the service | Stored in | Kept |
+|---|---|---|---|
+| traces | OTel SDK, OTLP to the node's agent | Tempo | 7 days |
+| metrics | OTel SDK, OTLP, every 15 s | Prometheus, through its OTLP receiver | 7 days, 4 GB |
+| logs | JSON lines on stdout, read from the node | Loki, with `trace_id` as structured metadata | 7 days |
+| service graph | derived from traces | Prometheus (`traces_service_graph_*`) | 7 days |
+
+The agent runs on every node, so a pod always sends to its own node
+(`internalTrafficPolicy: Local`). It also tails the containers' stdout, parses
+the JSON, sets severity and trace context, and names the stream after the
+container. The gateway collector batches and fans out to the three backends.
+
+### Following a request
+
+Grafana is at http://localhost:3000 on kind (`make grafana` prints the admin
+password; anonymous users can view). The **ShopSearch / Service RED**
+dashboard has rate, errors and latency per route for one service, then
+**Slow requests** (a Tempo query for server spans over a threshold) and the
+service's logs. Open a slow trace and expand it: gateway, then catalog, then
+the PostgreSQL statement, or search-api and its Redis calls. Each span links
+to its logs, and each log line links back to its trace. Latency panels for
+search-api and catalog also carry exemplars.
+
+`make obs-test` checks this path end to end, and runs in CI.
+
+### SLOs and alerts
+
+[`observability/files/slos.yaml`](observability/files/slos.yaml) defines four
+SLOs at the gateway (availability and latency for search and product lookups).
+Sloth turns them into recording rules and multiwindow burn-rate alerts with
+`severity: page` or `ticket`. Alertmanager sends those to a Discord or Slack
+webhook:
+
+```bash
+make alert-webhook URL=https://discord.com/api/webhooks/...
+```
+
+Without a webhook the route is rejected and alerts stay visible in Alertmanager
+and on the **ShopSearch / SLOs** dashboard. kube-prometheus-stack's own
+platform alerts (crash loops, full volumes, and so on) go to the default `null`
+receiver; the threshold detector of week 6 is a separate baseline.
+
+### Dashboards
+
+| Dashboard | What |
+|---|---|
+| ShopSearch / Service RED | rate, errors, latency per route, slow traces, service graph, logs, pod CPU and memory, indexer |
+| ShopSearch / SLOs | objective, SLI, error budget left, burn rate per window, firing alerts |
+| IncidentLens / Cost estimate | requested vs used CPU and memory per namespace, priced at AWS list prices |
+
+They are JSON files in [`observability/files/dashboards/`](observability/files/dashboards/),
+loaded by Grafana's sidecar. Grafana does not allow saving changes to them:
+export the edited dashboard as JSON and commit it.
+
+### Not done yet
+
+- **External Secrets.** The bootstrap script creates the two secrets (Grafana
+  admin, alert webhook). External Secrets with AWS Secrets Manager waits for the
+  first recorded EKS session, where it can be tested.
+- **Loki on S3.** The bucket and IRSA role exist in Terraform; Loki uses a local
+  volume until the same EKS session.

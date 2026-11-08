@@ -1,16 +1,3 @@
-{{- if .Values.storageClass.create }}
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: {{ .Values.storageClass.name }}
-provisioner: ebs.csi.aws.com
-parameters:
-  type: gp3
-  encrypted: "true"
-reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer
----
-{{- end }}
 # The operator creates the `postgres-rw` Service and the `postgres-app` secret
 # with a generated password, so there is no secret to bootstrap by hand.
 apiVersion: postgresql.cnpg.io/v1
@@ -32,3 +19,17 @@ spec:
     {{- end }}
   resources:
     {{- toYaml .Values.resources | nindent 4 }}
+---
+# CloudNativePG serves PostgreSQL metrics (connections, locks, WAL, database
+# size) on port `metrics` of every instance. Faults F11 to F13 show up here.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres
+  labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: shopsearch}
+spec:
+  selector:
+    matchLabels: {cnpg.io/cluster: postgres}
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s

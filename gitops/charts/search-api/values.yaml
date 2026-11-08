@@ -35,12 +35,16 @@ autoscaling:
   maxReplicas: 4
   targetCPUUtilization: 70
 
+# Traces and metrics go to the collector agent on the same node (the Service
+# routes node-locally). Logs are read from stdout by the same agent.
+otel:
+  enabled: true
+  endpoint: http://otel-agent.monitoring.svc:4318
+  metricExportIntervalMs: 15000
+
 rollout:
   pauseSeconds: 60
   progressDeadlineSeconds: 300
-
-metrics:
-  path: /metrics
 
 analysis:
   mode: http

@@ -1,0 +1,32 @@
+{{- $a := .Values.alerting -}}
+# SLO burn-rate alerts (severity page or ticket, from Sloth) go to the chat
+# webhook. Everything else stays in Alertmanager's default `null` route. The
+# kube-prometheus-stack values select this object by its part-of label.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slo-alerts
+  labels:
+    app.kubernetes.io/part-of: incidentlens
+spec:
+  route:
+    receiver: chat
+    matchers:
+      - {name: severity, matchType: "=~", value: "page|ticket"}
+    groupBy: [alertname, sloth_slo, severity]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: {{ $a.repeatInterval }}
+  receivers:
+    - name: chat
+      {{- if eq $a.receiver "slack" }}
+      slackConfigs:
+        - apiURL: {name: {{ $a.secretName }}, key: {{ $a.secretKey }}}
+          sendResolved: true
+      {{- else if eq $a.receiver "discord" }}
+      discordConfigs:
+        - apiURL: {name: {{ $a.secretName }}, key: {{ $a.secretKey }}}
+          sendResolved: true
+      {{- else }}
+      {{- fail "alerting.receiver must be discord or slack" }}
+      {{- end }}

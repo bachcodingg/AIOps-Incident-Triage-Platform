@@ -1,0 +1,6 @@
+{{- /*
+The SLO specs live in files/slos.yaml, not here, because Sloth's queries use
+Go templates ({{.window}}) that Helm would try to render. .Files.Get copies
+them verbatim. Sloth turns them into a PrometheusRule next to them.
+*/ -}}
+{{ .Files.Get "files/slos.yaml" }}

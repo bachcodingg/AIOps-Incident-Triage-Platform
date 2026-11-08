@@ -1,0 +1,5 @@
+apiVersion: v2
+name: observability
+description: SLOs (Sloth), alert routing and Grafana dashboards for ShopSearch.
+type: application
+version: 0.1.0

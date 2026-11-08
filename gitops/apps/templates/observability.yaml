@@ -1,0 +1,29 @@
+# SLOs, alert routing and dashboards. After the telemetry backends and Sloth
+# (wave -2), before the workload, so the first request is already measured.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.revision }}
+    path: gitops/observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: {duration: 10s, factor: 2, maxDuration: 3m}

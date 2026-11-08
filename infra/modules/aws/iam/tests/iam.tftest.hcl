@@ -14,9 +14,9 @@ run "each_role_trusts_exactly_one_service_account" {
   assert {
     condition = (
       jsondecode(aws_iam_role.irsa["loki"].assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.eu-central-1.amazonaws.com/id/ABC:sub"]
-      == "system:serviceaccount:observability:loki"
+      == "system:serviceaccount:monitoring:loki"
     )
-    error_message = "the loki role must trust only observability/loki"
+    error_message = "the loki role must trust only monitoring/loki"
   }
 
   assert {

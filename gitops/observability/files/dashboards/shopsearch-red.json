@@ -1,0 +1,818 @@
+{
+  "uid": "shopsearch-red",
+  "title": "ShopSearch / Service RED",
+  "description": "Rate, errors and duration per ShopSearch service, with its slow traces, logs and pods.",
+  "tags": [
+    "incidentlens",
+    "shopsearch"
+  ],
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "custom",
+        "query": "gateway,search-api,catalog",
+        "description": "",
+        "current": {
+          "text": "gateway",
+          "value": "gateway"
+        },
+        "options": [
+          {
+            "text": "gateway",
+            "value": "gateway",
+            "selected": true
+          },
+          {
+            "text": "search-api",
+            "value": "search-api",
+            "selected": false
+          },
+          {
+            "text": "catalog",
+            "value": "catalog",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "slow",
+        "label": "Slow means over",
+        "type": "custom",
+        "query": "50ms,100ms,300ms,1s",
+        "description": "",
+        "current": {
+          "text": "100ms",
+          "value": "100ms"
+        },
+        "options": [
+          {
+            "text": "50ms",
+            "value": "50ms",
+            "selected": false
+          },
+          {
+            "text": "100ms",
+            "value": "100ms",
+            "selected": true
+          },
+          {
+            "text": "300ms",
+            "value": "300ms",
+            "selected": false
+          },
+          {
+            "text": "1s",
+            "value": "1s",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "custom",
+        "query": "warn|error|fatal,info|warn|error|fatal,.*",
+        "description": "",
+        "current": {
+          "text": "warn|error|fatal",
+          "value": "warn|error|fatal"
+        },
+        "options": [
+          {
+            "text": "warn|error|fatal",
+            "value": "warn|error|fatal",
+            "selected": true
+          },
+          {
+            "text": "info|warn|error|fatal",
+            "value": "info|warn|error|fatal",
+            "selected": false
+          },
+          {
+            "text": ".*",
+            "value": ".*",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "IncidentLens",
+      "type": "dashboards",
+      "tags": [
+        "incidentlens"
+      ],
+      "asDropdown": true,
+      "includeVars": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Request **rate**, **errors** and **duration** per route, from the OpenTelemetry metric `http.server.request.duration`. To follow a slow request: open a trace in **Slow requests** (or click an exemplar dot on the latency panel, where the SDK records them), then expand its spans down to the Redis or PostgreSQL call. **Logs** shows the log lines of the same service; each one links to its trace."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requests per second",
+      "description": "Every API request the service answered, 4xx and 429s included.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 2,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shopsearch/$service\"}[$__rate_interval]))",
+          "legendFormat": "{{http_route}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error ratio (5xx)",
+      "description": "Share of requests answered with a 5xx. The availability SLO allows 0.5%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 2,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shopsearch/$service\",http_response_status_code=~\"5..\"}[$__rate_interval])) / sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shopsearch/$service\"}[$__rate_interval]))",
+          "legendFormat": "{{http_route}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.005
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latency",
+      "description": "The latency SLO is p95 under 300 ms (dashed line). Dots are exemplars: click one to open the trace of a request in that bucket.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 2,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"shopsearch/$service\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"shopsearch/$service\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "B",
+          "range": true,
+          "instant": false,
+          "exemplar": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"shopsearch/$service\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "refId": "C",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Responses by status",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{job=\"shopsearch/$service\"}[$__rate_interval]))",
+          "legendFormat": "{{http_response_status_code}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Slow requests (traces over $slow)",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Server spans of this service slower than the threshold, newest first. Click a trace ID to open it: the spans below the server span show where the time went.",
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 16,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "refId": "A",
+          "queryType": "traceql",
+          "limit": 20,
+          "tableType": "traces",
+          "query": "{resource.service.name=\"$service\" && kind=server && duration > $slow}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 7,
+      "type": "nodeGraph",
+      "title": "Service graph",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Who calls whom, from Tempo's metrics generator: request rate and error share per edge.",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "refId": "A",
+          "queryType": "serviceMap"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 10
+      },
+      "description": "stdout of the service's pods, parsed from JSON. Warnings and errors only unless Level is set to all.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "refId": "A",
+          "expr": "{service_name=\"$service\"} | detected_level=~\"$level\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Pods",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "CPU per pod",
+      "description": "CPU cores used, from cAdvisor.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"shopsearch\",container=\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Memory per pod",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"shopsearch\",container=\"$service\"})",
+          "legendFormat": "{{pod}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(kube_pod_container_resource_limits{namespace=\"shopsearch\",container=\"$service\",resource=\"memory\"})",
+          "legendFormat": "limit",
+          "refId": "B",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Restarts",
+      "description": "Container restarts. A crash loop (F01) shows up here first.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"shopsearch\",container=\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{pod}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Indexer (worker, no request rate)",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Change events",
+      "description": "Catalog changes applied to the search index, and those dead-lettered.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (outcome) (rate(indexer_changes_total{job=\"shopsearch/indexer\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Ready",
+      "description": "1 once the pod finished its first full reindex.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (k8s_pod_name) (indexer_ready{job=\"shopsearch/indexer\"})",
+          "legendFormat": "{{k8s_pod_name}}",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}
