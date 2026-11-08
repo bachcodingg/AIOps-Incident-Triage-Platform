@@ -47,10 +47,10 @@ jobs:
       - run: make gitops-lint
 
   e2e:
-    name: e2e on kind (make up, canary, policies)
+    name: e2e on kind (make up, canary, policies, observability)
     needs: [unit, gitops-lint]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       # ArgoCD syncs from GitHub, so it has to follow the branch under test.
       REVISION: ${{ github.head_ref || github.ref_name }}
@@ -62,6 +62,10 @@ jobs:
       # A good release is promoted, a bad one is aborted, bad pods are rejected (week 3 "done when").
       - name: make canary-test
         run: make canary-test
+      # Gate G1: a request is followed from the gateway down to the database span,
+      # with its logs and metrics, and the SLOs and dashboards are in place (week 4).
+      - name: make obs-test
+        run: make obs-test
       - name: Diagnostics
         if: failure()
         run: |
@@ -70,3 +74,8 @@ jobs:
           kubectl --context kind-incidentlens -n shopsearch get rollouts,analysisruns || true
           kubectl --context kind-incidentlens -n shopsearch get events --sort-by=.lastTimestamp | tail -40 || true
           kubectl --context kind-incidentlens -n shopsearch logs --prefix --tail=80 -l app.kubernetes.io/part-of=shopsearch || true
+          kubectl --context kind-incidentlens -n monitoring get pods,pvc -o wide || true
+          kubectl --context kind-incidentlens -n monitoring get events --sort-by=.lastTimestamp | tail -30 || true
+          kubectl --context kind-incidentlens -n monitoring logs --prefix --tail=60 -l app.kubernetes.io/name=opentelemetry-collector || true
+          kubectl --context kind-incidentlens -n monitoring logs --tail=40 deploy/sloth || true
+          kubectl --context kind-incidentlens top pods -A --sort-by=memory | head -30 || true
