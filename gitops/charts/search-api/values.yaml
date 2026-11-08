@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/bachcodingg/incidentlens/search-api
-  tag: unreleased # release.yml opens the pull request that updates tag and digest
-  digest: ""
+  tag: sha-ed3db743631197d48304ebdc3815fce46deb3df1
+  digest: "sha256:40c3f08c8c77ae11a0b72204e01ab1ddb86566e07a8ffb737bfe7c505eeeae8a"
   pullPolicy: IfNotPresent
 
 runAsUser: 10001
