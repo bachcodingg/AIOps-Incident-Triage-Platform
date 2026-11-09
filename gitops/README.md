@@ -46,7 +46,7 @@ adds it back.
 |---|---|---|
 | -4 | the `gp3` StorageClass (EKS only) | Prometheus, Loki and Tempo claim volumes in the next waves |
 | -3 | kube-prometheus-stack, argo-rollouts, cloudnative-pg, metrics-server | their CRDs and APIs |
-| -2 | kyverno, loki, tempo, otel-agent, otel-gateway, sloth | admission control and the telemetry backends, before anything sends to them |
+| -2 | kyverno, loki, tempo, otel-agent, otel-gateway, sloth, chaos-mesh | admission control and the telemetry backends, before anything sends to them; Chaos Mesh for [chaos/](../chaos/) |
 | -1 | policies, observability | policies before any workload pod; SLOs and dashboards before the first request |
 | 0 | redis, postgres | services need them |
 | 1 | catalog | owns the schema |

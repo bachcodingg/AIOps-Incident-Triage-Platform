@@ -51,6 +51,7 @@ make up          # kind + build + ArgoCD sync + end-to-end smoke test
 curl 'http://localhost:8080/api/search?q=gaming%20lapotp'
 make canary-test # a good release is promoted, a bad one aborts on its own
 make obs-test    # a request followed from the gateway to its database span
+make chaos-test FAULT=F12   # break it on purpose: one fault, its symptom, recovery
 make grafana     # Grafana on http://localhost:3000 and its admin password
 make down        # delete the cluster
 ```
@@ -75,10 +76,10 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 | [`services/`](services/) | ShopSearch: gateway, search-api, catalog, indexer |
 | [`infra/`](infra/) | Terraform modules for AWS EKS and OCI, Terragrunt environments, kind |
 | [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies, SLOs and dashboards |
-| [`chaos/`](chaos/) | fault catalog (F01–F14); Chaos Mesh experiments and chaos-runner in week 5 |
+| [`chaos/`](chaos/) | fault catalog (F01–F14), Chaos Mesh experiments, and `chaos-runner`, which injects them and seals the ground truth |
 | [`aiops/`](aiops/) | detectors, correlator, triage agent, remediator (weeks 6–9) |
 | [`eval/`](eval/) | evaluation harness and results (weeks 6–10) |
-| [`docs/`](docs/) | design doc; runbooks and postmortems later |
+| [`docs/`](docs/) | design doc, [runbooks](docs/runbooks/) for every fault; postmortems later |
 
 ## Roadmap
 
@@ -86,7 +87,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [x] **Week 2 — Terraform (code):** remote state, network/cluster/registry/iam modules for OCI and AWS EKS, infra CI. The recorded apply and destroy on a real account are still to do, see [infra/README.md](infra/README.md#what-was-verified-and-what-was-not)
 - [x] **Week 3 — GitOps:** Helm charts, ArgoCD, signed images, Argo Rollouts canaries, Kyverno ([how a commit reaches production](gitops/README.md#from-commit-to-production))
 - [x] **Week 4 — Observability and SLOs (gate G1):** OpenTelemetry in all 4 services, collector agent and gateway, Prometheus, Loki, Tempo and Grafana through ArgoCD, Sloth SLOs with burn-rate alerts, RED, SLO and cost dashboards, a daily k6 load curve. `make obs-test` follows a request from the gateway to its database span ([how](gitops/README.md#following-a-request))
-- [ ] Week 5 — Chaos and runbooks
+- [x] **Week 5 — Chaos and runbooks:** the 14 faults as Chaos Mesh experiments, bad releases and load, `chaos-runner` with a seeded random schedule and hash-chained sealed labels, a runbook per fault, and a dry run in CI that proves each fault's symptom on its own cluster ([how faults are injected](chaos/README.md))
 - [ ] Week 6 — Detection, correlation, dataset recording (**gate G2**)
 - [ ] Week 8 — Triage agent
 - [ ] Week 9 — Remediation and console
