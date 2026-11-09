@@ -33,8 +33,6 @@ app.kubernetes.io/name: {{ .Chart.Name }}
 ---
 {{ include "service-lib.hpa" . }}
 ---
-{{ include "service-lib.podmonitor" . }}
----
 {{ include "service-lib.analysis" . }}
 {{- end }}
 
@@ -133,6 +131,7 @@ spec:
             - name: {{ .Values.containerPort.name }}
               containerPort: {{ .Values.containerPort.port }}
           env:
+            {{- include "service-lib.otelEnv" . | nindent 12 }}
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}
               value: {{ $value | quote }}
@@ -202,24 +201,36 @@ spec:
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilization }}
 {{- end }}
 
-{{- define "service-lib.podmonitor" -}}
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  name: {{ .Chart.Name }}
-  labels:
-    {{- include "service-lib.labels" . | nindent 4 }}
-spec:
-  selector:
-    matchLabels:
-      {{- include "service-lib.selector" . | nindent 6 }}
-  # Copies the release hash onto every series, so a query can tell canary from stable.
-  podTargetLabels:
-    - rollouts-pod-template-hash
-  podMetricsEndpoints:
-    - port: {{ .Values.containerPort.name }}
-      path: {{ .Values.metrics.path }}
-      interval: 15s
+{{/*
+OpenTelemetry. Every service reads the same standard variables. The pod's
+rollout hash goes onto the telemetry as a resource attribute, which Prometheus
+keeps as the label `rollouts_pod_template_hash`: that is how canary analysis
+tells the new release from the old one. Prometheus turns service.namespace and
+service.name into job="shopsearch/<service>".
+*/}}
+{{- define "service-lib.otelEnv" -}}
+- name: POD_NAME
+  valueFrom: {fieldRef: {fieldPath: metadata.name}}
+- name: POD_NAMESPACE
+  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+- name: NODE_NAME
+  valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+- name: ROLLOUT_HASH
+  valueFrom: {fieldRef: {fieldPath: "metadata.labels['rollouts-pod-template-hash']"}}
+- name: OTEL_SERVICE_NAME
+  value: {{ .Chart.Name | quote }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.otel.endpoint | quote }}
+- name: OTEL_EXPORTER_OTLP_PROTOCOL
+  value: http/protobuf
+- name: OTEL_METRIC_EXPORT_INTERVAL
+  value: {{ .Values.otel.metricExportIntervalMs | quote }}
+- name: OTEL_RESOURCE_ATTRIBUTES
+  value: "service.namespace={{ .Release.Namespace }},service.instance.id=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.node.name=$(NODE_NAME),rollouts_pod_template_hash=$(ROLLOUT_HASH)"
+{{- if not .Values.otel.enabled }}
+- name: OTEL_SDK_DISABLED
+  value: "true"
+{{- end }}
 {{- end }}
 
 {{/*
@@ -228,11 +239,13 @@ not only one that breaks the SLO: fault F03 adds 250 ms, which still fits under
 the 300 ms objective, so an absolute threshold alone would let it through.
 
 Without a traffic router, Service load balancing decides who sees which request,
-so canary and stable are told apart by the hash label on the series.
+so canary and stable are told apart by the hash label on the series (see
+service-lib.otelEnv).
 */}}
 {{- define "service-lib.analysis" -}}
-{{- $canary := printf "namespace=%q,job=%q,rollouts_pod_template_hash=\"{{args.canary-hash}}\"" .Release.Namespace (printf "%s/%s" .Release.Namespace .Chart.Name) -}}
-{{- $stable := printf "namespace=%q,job=%q,rollouts_pod_template_hash=\"{{args.stable-hash}}\"" .Release.Namespace (printf "%s/%s" .Release.Namespace .Chart.Name) -}}
+{{- $job := printf "%s/%s" .Release.Namespace .Chart.Name -}}
+{{- $canary := printf "job=%q,rollouts_pod_template_hash=\"{{args.canary-hash}}\"" $job -}}
+{{- $stable := printf "job=%q,rollouts_pod_template_hash=\"{{args.stable-hash}}\"" $job -}}
 {{- $a := .Values.analysis -}}
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
@@ -296,8 +309,9 @@ spec:
             histogram_quantile(0.95, sum by (le) (rate({{ $a.bucketMetric }}{ {{- $canary -}} }[1m])))
             - histogram_quantile(0.95, sum by (le) (rate({{ $a.bucketMetric }}{ {{- $stable -}} }[1m])))
     {{- else }}
-    # A worker has no request stream to compare: it must stay up and not dead-letter.
-    - name: up
+    # A worker has no request stream to compare: it must get ready and not dead-letter.
+    # Metrics are pushed, so there is no `up`; the worker reports readiness itself.
+    - name: ready
       initialDelay: {{ $a.initialDelay }}
       interval: {{ $a.interval }}
       failureLimit: 1
@@ -305,7 +319,7 @@ spec:
       provider:
         prometheus:
           address: {{ $a.prometheusAddress }}
-          query: sum(up{ {{- $canary -}} }) or vector(0)
+          query: sum(indexer_ready{ {{- $canary -}} }) or vector(0)
     - name: dead-letters
       initialDelay: {{ $a.initialDelay }}
       interval: {{ $a.interval }}

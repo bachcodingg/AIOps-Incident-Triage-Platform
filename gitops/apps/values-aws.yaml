@@ -1,5 +1,23 @@
 # EKS, for recorded sessions. `make destroy` removes the load balancer and the
-# volume before Terraform runs, because Terraform does not know about them.
+# volumes before Terraform runs, because Terraform does not know about them.
+storageClass: {create: true, name: gp3}
+
+addons:
+  kube-prometheus-stack:
+    values:
+      prometheus:
+        prometheusSpec:
+          storageSpec:
+            volumeClaimTemplate:
+              spec: {storageClassName: gp3}
+  loki:
+    values:
+      singleBinary:
+        persistence: {storageClass: gp3}
+  tempo:
+    values:
+      persistence: {storageClassName: gp3}
+
 workload:
   gateway:
     values:
@@ -7,4 +25,3 @@ workload:
   postgres:
     values:
       storage: {className: gp3}
-      storageClass: {create: true, name: gp3}

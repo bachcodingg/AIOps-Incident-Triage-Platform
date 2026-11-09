@@ -40,8 +40,9 @@ gated remediator). Details: [docs/design.md](docs/design.md).
 
 ## Quickstart (kind, free)
 
-Requirements: Docker (4 GB+), `make`, `bash`, `curl`. `kind`, `kubectl` and
-`helm` are downloaded into `.bin/` if they are not on your PATH.
+Requirements: Docker with 8 GB of memory, `make`, `bash`, `curl`, `python3`.
+`kind`, `kubectl` and `helm` are downloaded into `.bin/` if they are not on
+your PATH.
 
 ```bash
 git clone https://github.com/bachcodingg/AIOps-Incident-Triage-Platform.git
@@ -49,14 +50,17 @@ cd AIOps-Incident-Triage-Platform
 make up          # kind + build + ArgoCD sync + end-to-end smoke test
 curl 'http://localhost:8080/api/search?q=gaming%20lapotp'
 make canary-test # a good release is promoted, a bad one aborts on its own
+make obs-test    # a request followed from the gateway to its database span
+make grafana     # Grafana on http://localhost:3000 and its admin password
 make down        # delete the cluster
 ```
 
 `make up` deploys the same charts through ArgoCD as a cloud cluster does, so
-ArgoCD follows your current branch **on GitHub**: push before you run it. Both
-commands run in the [`e2e` CI job](.github/workflows/ci.yml) on every pull
-request. If port 8080 is taken, use `make up HOST_PORT=8088` on a new cluster.
-Other targets: `make help`.
+ArgoCD follows your current branch **on GitHub**: push before you run it. All
+three tests run in the [`e2e` CI job](.github/workflows/ci.yml) on every pull
+request. If port 8080 or 3000 is taken, use `make up HOST_PORT=8088
+GRAFANA_PORT=3001` on a new cluster. With less than 8 GB for Docker, the CI job
+is the place to run the whole stack. Other targets: `make help`.
 
 For the cloud: `make cloud` builds EKS and `make destroy` removes it again and
 proves nothing billable is left. See [infra/README.md](infra/README.md).
@@ -70,7 +74,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 |---|---|
 | [`services/`](services/) | ShopSearch: gateway, search-api, catalog, indexer |
 | [`infra/`](infra/) | Terraform modules for AWS EKS and OCI, Terragrunt environments, kind |
-| [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies |
+| [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies, SLOs and dashboards |
 | [`chaos/`](chaos/) | fault catalog (F01–F14); Chaos Mesh experiments and chaos-runner in week 5 |
 | [`aiops/`](aiops/) | detectors, correlator, triage agent, remediator (weeks 6–9) |
 | [`eval/`](eval/) | evaluation harness and results (weeks 6–10) |
@@ -81,7 +85,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [x] **Week 1 — Foundations:** monorepo, design doc, 4 services with health endpoints, Dockerfiles and unit tests, `make up` on kind
 - [x] **Week 2 — Terraform (code):** remote state, network/cluster/registry/iam modules for OCI and AWS EKS, infra CI. The recorded apply and destroy on a real account are still to do, see [infra/README.md](infra/README.md#what-was-verified-and-what-was-not)
 - [x] **Week 3 — GitOps:** Helm charts, ArgoCD, signed images, Argo Rollouts canaries, Kyverno ([how a commit reaches production](gitops/README.md#from-commit-to-production))
-- [ ] Week 4 — Observability and SLOs (**gate G1**)
+- [x] **Week 4 — Observability and SLOs (gate G1):** OpenTelemetry in all 4 services, collector agent and gateway, Prometheus, Loki, Tempo and Grafana through ArgoCD, Sloth SLOs with burn-rate alerts, RED, SLO and cost dashboards, a daily k6 load curve. `make obs-test` follows a request from the gateway to its database span ([how](gitops/README.md#following-a-request))
 - [ ] Week 5 — Chaos and runbooks
 - [ ] Week 6 — Detection, correlation, dataset recording (**gate G2**)
 - [ ] Week 8 — Triage agent

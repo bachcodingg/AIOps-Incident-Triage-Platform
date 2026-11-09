@@ -3,12 +3,7 @@ image: ghcr.io/cloudnative-pg/postgresql:17.6
 
 storage:
   size: 1Gi
-  className: "" # empty means the cluster's default StorageClass
-
-# Set on EKS, which has no default StorageClass.
-storageClass:
-  create: false
-  name: gp3
+  className: "" # empty means the cluster's default StorageClass (gp3 on EKS, see gitops/apps)
 
 resources:
   requests: {cpu: 100m, memory: 128Mi}

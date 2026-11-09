@@ -1,0 +1,12 @@
+# Where SLO alerts go. The webhook URL is a secret and never in Git:
+#   make alert-webhook URL=https://discord.com/api/webhooks/...
+# creates `alert-webhook` (key `url`) in the monitoring namespace. Without it
+# Alertmanager rejects this route, and alerts stay visible in its UI only.
+alerting:
+  receiver: discord # discord | slack
+  secretName: alert-webhook
+  secretKey: url
+  repeatInterval: 4h
+
+# Grafana folder for the dashboards in files/dashboards/.
+dashboardFolder: IncidentLens

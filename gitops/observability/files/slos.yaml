@@ -1,0 +1,103 @@
+# ShopSearch SLOs, as in docs/design.md section 4. Sloth generates the
+# recording rules and the multiwindow, multi-burn-rate alerts from this:
+#
+#   severity  burn rate  long window  short window  budget used
+#   page      14.4x      1 h          5 min         2%
+#   page      6x         6 h          30 min        5%
+#   ticket    3x         1 d          2 h           10%
+#   ticket    1x         3 d          6 h           10%
+#
+# Measured at the gateway, where users meet the system. Window: 30 days.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: shopsearch
+  labels:
+    app.kubernetes.io/part-of: incidentlens
+spec:
+  service: shopsearch
+  labels:
+    owner: incidentlens
+  slos:
+    - name: search-availability
+      objective: 99.5
+      description: GET /api/search answers without a 5xx. 429s count as good.
+      sli:
+        events:
+          errorQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/search",http_response_status_code=~"5.."}[{{.window}}]))
+          totalQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/search"}[{{.window}}]))
+      alerting:
+        name: SearchAvailabilityBudgetBurn
+        labels:
+          category: availability
+        annotations:
+          summary: Search is failing fast enough to burn its error budget.
+          runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
+
+    - name: search-latency
+      objective: 95
+      description: GET /api/search answers in under 300 ms.
+      sli:
+        events:
+          # Slow = all requests minus those in the le="0.3" bucket.
+          errorQuery: |
+            sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/search"}[{{.window}}]))
+            -
+            sum(rate(http_server_request_duration_seconds_bucket{job="shopsearch/gateway",http_route="/api/search",le="0.3"}[{{.window}}]))
+          totalQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/search"}[{{.window}}]))
+      alerting:
+        name: SearchLatencyBudgetBurn
+        labels:
+          category: latency
+        annotations:
+          summary: Too many searches take longer than 300 ms.
+          runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
+
+    - name: products-availability
+      objective: 99.5
+      description: GET /api/products/{id} answers without a 5xx. 404s and 429s count as good.
+      sli:
+        events:
+          errorQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id",http_response_status_code=~"5.."}[{{.window}}]))
+          totalQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id"}[{{.window}}]))
+      alerting:
+        name: ProductsAvailabilityBudgetBurn
+        labels:
+          category: availability
+        annotations:
+          summary: Product lookups are failing fast enough to burn their error budget.
+          runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}
+
+    - name: products-latency
+      objective: 95
+      description: GET /api/products/{id} answers in under 300 ms.
+      sli:
+        events:
+          errorQuery: |
+            sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id"}[{{.window}}]))
+            -
+            sum(rate(http_server_request_duration_seconds_bucket{job="shopsearch/gateway",http_route="/api/products/:id",le="0.3"}[{{.window}}]))
+          totalQuery: sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id"}[{{.window}}]))
+      alerting:
+        name: ProductsLatencyBudgetBurn
+        labels:
+          category: latency
+        annotations:
+          summary: Too many product lookups take longer than 300 ms.
+          runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
+        pageAlert:
+          labels: {severity: page}
+        ticketAlert:
+          labels: {severity: ticket}

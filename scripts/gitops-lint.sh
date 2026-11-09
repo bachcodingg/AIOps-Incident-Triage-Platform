@@ -25,6 +25,17 @@ for env in kind aws oci; do
   "$HELM" template root gitops/apps -f "gitops/apps/values-$env.yaml" | conform
 done
 
+echo "==> observability"
+"$HELM" lint --quiet gitops/observability
+"$HELM" template observability gitops/observability --namespace monitoring | conform
+# Every dashboard must be valid JSON with a unique uid.
+python3 - gitops/observability/files/dashboards/*.json <<'PY'
+import json, sys
+uids = [json.load(open(p))["uid"] for p in sys.argv[1:]]
+assert len(uids) == len(set(uids)), f"duplicate dashboard uid in {uids}"
+print(f"{len(uids)} dashboards: {', '.join(uids)}")
+PY
+
 echo "==> policies"
 "$HELM" lint --quiet gitops/policies
 "$HELM" template policies gitops/policies | conform

@@ -1,0 +1,21 @@
+{{- /*
+One ConfigMap per dashboard JSON in files/dashboards/. Grafana's sidecar loads
+every ConfigMap labelled grafana_dashboard=1, in any namespace. The JSON is
+exported from Grafana and copied verbatim, so its {{ }} legends stay intact.
+*/ -}}
+{{- range $path, $_ := .Files.Glob "files/dashboards/*.json" }}
+{{- $name := base $path | trimSuffix ".json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-{{ $name }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: incidentlens
+  annotations:
+    grafana_folder: {{ $.Values.dashboardFolder | quote }}
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

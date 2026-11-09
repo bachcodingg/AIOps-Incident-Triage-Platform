@@ -45,22 +45,25 @@ autoscaling:
   maxReplicas: 4
   targetCPUUtilization: 70
 
+# Traces and metrics go to the collector agent on the same node (the Service
+# routes node-locally). Logs are read from stdout by the same agent.
+otel:
+  enabled: true
+  endpoint: http://otel-agent.monitoring.svc:4318
+  metricExportIntervalMs: 15000
+
 rollout:
   pauseSeconds: 60
   progressDeadlineSeconds: 300
-
-metrics:
-  path: /q/metrics
 
 analysis:
   mode: http
   prometheusAddress: http://prometheus-operated.monitoring.svc:9090
   initialDelay: 45s
   interval: 30s
-  # Micrometer's names until week 4 moves catalog to OpenTelemetry.
-  requestsMetric: http_server_requests_seconds_count
-  bucketMetric: http_server_requests_seconds_bucket
-  errorMatcher: status=~"5.."
+  requestsMetric: http_server_request_duration_seconds_count
+  bucketMetric: http_server_request_duration_seconds_bucket
+  errorMatcher: http_response_status_code=~"5.."
   maxErrorRateIncrease: 0.01
   maxP95Seconds: 0.3 # the latency SLO
   maxP95IncreaseSeconds: 0.1

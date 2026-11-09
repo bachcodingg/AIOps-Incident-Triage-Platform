@@ -7,25 +7,59 @@ data:
   script.js: |
     import http from "k6/http";
 
-    // Week 3 baseline. Week 4 replaces this with the daily traffic curve.
+    // A day of shop traffic: quiet at night, a lunch bump, the peak in the
+    // evening. The curve follows the wall clock (UTC + hourOffset), so a
+    // restarted pod picks up where the day is. Each hour gets a little noise,
+    // the same for the same hour of the same day, so anomaly detectors (week 6)
+    // see something more like real traffic than a perfect sine.
+    const SHAPE = [0.30, 0.22, 0.17, 0.15, 0.15, 0.18, 0.28, 0.42, 0.55, 0.62, 0.66, 0.70,
+                   0.74, 0.70, 0.66, 0.66, 0.70, 0.78, 0.88, 0.97, 1.00, 0.92, 0.70, 0.45];
+    const PEAK = {{ .Values.curve.peakRatePerSecond }};
+    const FLOOR = {{ .Values.curve.minRatePerSecond }};
+    const NOISE = {{ .Values.curve.noise }};
+    const HOUR_OFFSET = {{ .Values.curve.hourOffset }};
+    // 1440 is a real day. Smaller values replay the day faster, for demos.
+    const HOUR_MS = ({{ .Values.curve.dayLengthMinutes }} / 24) * 60 * 1000;
+    const DAYS = {{ .Values.curve.days }};
+
+    function noise(slot) {
+      const x = Math.sin(slot * 12.9898) * 43758.5453;
+      return (x - Math.floor(x)) * 2 - 1; // -1..1, fixed per slot
+    }
+    // Requests per minute: k6 wants whole numbers, and per second is too coarse.
+    function rateAt(slot) {
+      const hour = (((slot + HOUR_OFFSET) % 24) + 24) % 24;
+      const perSecond = PEAK * SHAPE[hour] * (1 + NOISE * noise(slot));
+      return Math.round(Math.max(FLOOR, perSecond) * 60);
+    }
+
+    // One ramp per hour, starting from now. k6 exits after DAYS days and
+    // Kubernetes starts it again.
+    const now = Date.now();
+    const slot0 = Math.floor(now / HOUR_MS);
+    const stages = [{ target: rateAt(slot0 + 1), duration: `${Math.max(1, Math.round(((slot0 + 1) * HOUR_MS - now) / 1000))}s` }];
+    for (let i = 2; i <= DAYS * 24; i++) {
+      stages.push({ target: rateAt(slot0 + i), duration: `${Math.round(HOUR_MS / 1000)}s` });
+    }
+
     export const options = {
       discardResponseBodies: true,
       // kube-proxy balances per connection. With keep-alive every request would
       // stay on an old pod, and a healthy canary would look like it had no traffic.
       noConnectionReuse: true,
       scenarios: {
-        steady: {
-          executor: "constant-arrival-rate",
-          rate: {{ .Values.ratePerSecond }},
-          timeUnit: "1s",
-          duration: "87600h",
-          preAllocatedVUs: 5,
-          maxVUs: 20,
+        daily: {
+          executor: "ramping-arrival-rate",
+          startRate: rateAt(slot0),
+          timeUnit: "1m",
+          stages,
+          preAllocatedVUs: 10,
+          maxVUs: {{ .Values.maxVUs }},
         },
       },
     };
 
-    const queries = ["laptop", "gaming laptop", "wireless mouse", "lapotp", "phone"];
+    const queries = ["laptop", "gaming laptop", "wireless mouse", "lapotp", "phone", "usb c cable", "monitor 27", "keybaord"];
     const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
     // Each service is called directly as well as through the gateway. The gateway
@@ -34,6 +68,7 @@ data:
       const id = 1 + Math.floor(Math.random() * 10);
       const q = encodeURIComponent(pick(queries));
       const url = pick([
+        `{{ .Values.targets.gateway }}/api/search?q=${q}`,
         `{{ .Values.targets.gateway }}/api/search?q=${q}`,
         `{{ .Values.targets.gateway }}/api/products/${id}`,
         `{{ .Values.targets.searchApi }}/search?q=${q}`,

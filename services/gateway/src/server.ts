@@ -1,3 +1,5 @@
+// First import: patches the http module before Fastify loads it.
+import { shutdownTelemetry } from "./telemetry.js";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 
@@ -8,6 +10,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, async () => {
     app.log.info({ signal }, "shutting down");
     await app.close();
+    await shutdownTelemetry();
     process.exit(0);
   });
 }

@@ -11,9 +11,10 @@ CLUSTER   ?= incidentlens
 NAMESPACE ?= shopsearch
 TAG       ?= dev
 SERVICES  := gateway search-api catalog indexer
-# Host port for the gateway. Fixed when the cluster is created: change it
-# with `make down` and then `make up HOST_PORT=...`.
-HOST_PORT ?= 8080
+# Host ports for the gateway and Grafana. Fixed when the cluster is created:
+# change them with `make down` and then `make up HOST_PORT=... GRAFANA_PORT=...`.
+HOST_PORT    ?= 8080
+GRAFANA_PORT ?= 3000
 
 KIND_VERSION    ?= v0.33.0
 KUBECTL_VERSION ?= v1.37.2
@@ -112,7 +113,8 @@ cluster: tools ## Create the kind cluster if it does not exist
 	  echo "kind cluster $(CLUSTER) already exists"; \
 	else \
 	  mkdir -p .bin; \
-	  sed 's/hostPort: 8080/hostPort: $(HOST_PORT)/' infra/kind/cluster.yaml > .bin/kind-cluster.yaml; \
+	  sed -e 's/hostPort: 8080/hostPort: $(HOST_PORT)/' -e 's/hostPort: 3000/hostPort: $(GRAFANA_PORT)/' \
+	    infra/kind/cluster.yaml > .bin/kind-cluster.yaml; \
 	  $(KIND) create cluster --name $(CLUSTER) --config .bin/kind-cluster.yaml --wait 120s; \
 	fi
 
@@ -137,7 +139,7 @@ up: ## Create cluster, build, load, sync through ArgoCD and smoke test
 	$(MAKE) --no-print-directory gitops wait; \
 	if [ -n "$$existed" ]; then $(MAKE) --no-print-directory restart; fi; \
 	$(MAKE) --no-print-directory smoke; \
-	echo "make up finished in $$(( $$(date +%s) - start ))s. Gateway: http://localhost:$(HOST_PORT)"
+	echo "make up finished in $$(( $$(date +%s) - start ))s. Gateway: http://localhost:$(HOST_PORT), Grafana: http://localhost:$(GRAFANA_PORT)"
 
 .PHONY: restart
 restart: tools ## Restart the services to pick up new :dev images
@@ -153,6 +155,22 @@ redeploy: build load restart ## Rebuild images and restart the services
 .PHONY: smoke
 smoke: tools ## End-to-end check through the gateway, including the indexer queue
 	GATEWAY="http://localhost:$(HOST_PORT)" KUBECTL=$(KUBECTL) CONTEXT="kind-$(CLUSTER)" NAMESPACE="$(NAMESPACE)" scripts/smoke.sh
+
+.PHONY: obs-test
+obs-test: tools ## Gate G1: metrics, a trace down to the database span, its logs, SLOs, dashboards
+	GATEWAY="http://localhost:$(HOST_PORT)" KUBECTL=$(KUBECTL) CONTEXT="kind-$(CLUSTER)" scripts/obs-test.sh
+
+.PHONY: grafana
+grafana: tools ## Print the Grafana URL and admin password (anonymous users can view)
+	@echo "Grafana: http://localhost:$(GRAFANA_PORT)  (cloud: kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80)"
+	@echo "admin password: $$($(KUBECTL) --context kind-$(CLUSTER) -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)"
+
+.PHONY: alert-webhook
+alert-webhook: tools ## Send SLO alerts to a Discord or Slack webhook: make alert-webhook URL=https://...
+	@test -n "$(URL)" || { echo "usage: make alert-webhook URL=https://discord.com/api/webhooks/..."; exit 1; }
+	@$(KUBECTL) --context kind-$(CLUSTER) -n monitoring create secret generic alert-webhook --from-literal=url='$(URL)' \
+	  --dry-run=client -o yaml | $(KUBECTL) --context kind-$(CLUSTER) apply -f - >/dev/null
+	@echo "stored; Alertmanager picks it up within a minute. For Slack set alerting.receiver: slack in gitops/observability/values.yaml"
 
 .PHONY: canary-test
 canary-test: tools ## Prove canary promotion, automatic abort and admission policies

@@ -2,7 +2,17 @@ image:
   repository: grafana/k6
   tag: 2.3.0
 
-ratePerSecond: 6
+# Requests per second over a day (see the script in templates/loadgen.yaml).
+curve:
+  peakRatePerSecond: 10 # at 20:00
+  minRatePerSecond: 4   # canary analysis needs some traffic even at 04:00
+  noise: 0.1            # +-10% per hour, fixed per hour of each day
+  hourOffset: 1         # UTC+1, so the evening peak lands in the evening in Munich
+  dayLengthMinutes: 1440
+  days: 30
+
+# Enough for the peak rate while a fault adds a second or two of latency.
+maxVUs: 60
 
 targets:
   gateway: http://gateway:8080

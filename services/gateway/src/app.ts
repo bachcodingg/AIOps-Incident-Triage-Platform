@@ -1,7 +1,9 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { trace, type Meter } from "@opentelemetry/api";
+import { ATTR_HTTP_ROUTE } from "@opentelemetry/semantic-conventions";
 import type { Config } from "./config.js";
-import { Metrics } from "./metrics.js";
+import { Metrics, traceFields } from "./metrics.js";
 
 export type FetchFn = typeof fetch;
 
@@ -10,6 +12,7 @@ export interface AppOptions {
   fetchFn?: FetchFn;
   logger?: boolean;
   random?: () => number;
+  meter?: Meter;
 }
 
 // Calls an upstream service and relays its JSON body and status code.
@@ -52,12 +55,33 @@ export async function buildApp({
   fetchFn = fetch,
   logger = true,
   random = Math.random,
+  meter,
 }: AppOptions): Promise<FastifyInstance> {
+  // JSON lines with an ISO time, a level name and the trace and span ids, so
+  // the collector can parse them and Grafana can link a log line to its trace.
   const app = Fastify({
-    logger: logger ? { level: config.logLevel } : false,
+    logger: logger
+      ? {
+          level: config.logLevel,
+          timestamp: () => `,"time":"${new Date().toISOString()}"`,
+          formatters: { level: (label) => ({ level: label }) },
+          mixin: () => traceFields(),
+        }
+      : false,
   });
 
-  const metrics = new Metrics();
+  const metrics = new Metrics(meter);
+
+  // The http instrumentation names server spans after the method only. Fastify
+  // knows the route, so name the span "GET /api/search" and tag it.
+  app.addHook("onRequest", async (req) => {
+    const route = req.routeOptions.url;
+    const span = trace.getActiveSpan();
+    if (span && route) {
+      span.setAttribute(ATTR_HTTP_ROUTE, route);
+      span.updateName(`${req.method} ${route}`);
+    }
+  });
 
   // Fires for every response, including 429s from the rate limiter below.
   app.addHook("onResponse", async (req, reply) => {
@@ -76,10 +100,6 @@ export async function buildApp({
   // Kubernetes kill healthy pods.
   app.get("/healthz", { config: { rateLimit: false } }, async () => ({ status: "ok" }));
   app.get("/readyz", { config: { rateLimit: false } }, async () => ({ status: "ready" }));
-
-  app.get("/metrics", { config: { rateLimit: false } }, async (_req, reply) =>
-    reply.type(metrics.contentType).send(await metrics.render()),
-  );
 
   // A deliberately bad release (F02) turns this on with FAULT_ERROR_RATE.
   if (config.faultErrorRate > 0) {

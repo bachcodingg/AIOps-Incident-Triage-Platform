@@ -7,11 +7,10 @@ import threading
 
 import redis
 
-from . import core
+from . import core, telemetry
 from .catalog_client import fetch_all_products
-from .health import CHANGES, HealthState, serve
+from .health import HealthState, serve
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("indexer")
 
 
@@ -30,12 +29,15 @@ def initial_index(client: redis.Redis, catalog_url: str, state: HealthState, sto
 
 
 def run() -> None:
+    telemetry.configure_logging()
+    telemetry.configure()
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     catalog_url = os.getenv("CATALOG_URL", "http://catalog:8080")
     health_port = int(os.getenv("HEALTH_PORT", "8081"))
 
     client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=2.0)
     state = HealthState()
+    telemetry.observe_readiness(lambda: state.ready)
     server = serve(state, health_port)
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -50,7 +52,7 @@ def run() -> None:
             applied = core.consume_once(client, timeout_seconds=5)
             if applied is not None:
                 outcome = "applied" if applied else "dead-lettered"
-                CHANGES.labels(outcome).inc()
+                telemetry.CHANGES.add(1, {"outcome": outcome})
                 log.info("change %s", outcome)
         except redis.RedisError as exc:
             log.warning("redis error, retrying: %s", exc)
@@ -58,6 +60,7 @@ def run() -> None:
 
     log.info("shutting down")
     server.shutdown()
+    telemetry.shutdown()
 
 
 if __name__ == "__main__":
