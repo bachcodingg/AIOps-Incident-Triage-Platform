@@ -37,6 +37,11 @@ livenessProbe:
   httpGet: {path: /q/health/live, port: http}
   periodSeconds: 10
 
+# The stateless services may run on kind's tainted worker node, the target of
+# fault F14 (infra/kind/cluster.yaml). Harmless where no node has the taint.
+tolerations:
+  - {key: incidentlens.dev/pool, operator: Equal, value: workload, effect: NoSchedule}
+
 resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {cpu: "1", memory: 384Mi}

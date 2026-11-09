@@ -1,5 +1,7 @@
-# Local evaluation cluster. One control-plane node keeps memory low enough
-# for a laptop; week 5 adds a worker so node-loss faults (F14) have a target.
+# Local evaluation cluster: a control-plane node for the platform and the data
+# stores, and a worker that only the stateless ShopSearch services tolerate.
+# Fault F14 (node loss) stops the worker, so it takes part of the workload down
+# but never Prometheus, Loki, Tempo, PostgreSQL or Redis with it.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: incidentlens
@@ -16,3 +18,12 @@ nodes:
         hostPort: 3000
         listenAddress: "127.0.0.1"
         protocol: TCP
+  - role: worker
+    labels:
+      incidentlens.dev/pool: workload
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - {key: incidentlens.dev/pool, value: workload, effect: NoSchedule}
