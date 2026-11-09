@@ -176,6 +176,48 @@ alert-webhook: tools ## Send SLO alerts to a Discord or Slack webhook: make aler
 canary-test: tools ## Prove canary promotion, automatic abort and admission policies
 	GATEWAY="http://localhost:$(HOST_PORT)" KUBECTL=$(KUBECTL) CONTEXT="kind-$(CLUSTER)" scripts/canary-test.sh
 
+# --- chaos (chaos/README.md) ---------------------------------------------------
+# chaos-runner lives in its own virtualenv under .bin/. Labels are written to
+# ~/.incidentlens/labels, never into this repository (the AIOps layer reads it).
+PYTHON ?= $(shell command -v python3 || command -v python)
+CHAOS_VENV := .bin/chaos-venv
+ifeq ($(OS),windows)
+  CHAOS_PY := $(CHAOS_VENV)/Scripts/python.exe
+else
+  CHAOS_PY := $(CHAOS_VENV)/bin/python
+endif
+CHAOS = PYTHONPATH=chaos/runner $(CHAOS_PY) -m chaos_runner --context kind-$(CLUSTER) \
+  --kubectl $(KUBECTL) --kind $(KIND) --kind-cluster $(CLUSTER) --base-tag $(TAG)
+
+$(CHAOS_PY): chaos/runner/requirements.txt chaos/runner/requirements-dev.txt
+	$(PYTHON) -m venv $(CHAOS_VENV)
+	$(CHAOS_PY) -m pip install -q -r chaos/runner/requirements-dev.txt
+	@touch $@
+
+.PHONY: chaos-unit
+chaos-unit: $(CHAOS_PY) ## Unit test chaos-runner and validate the fault catalog (no cluster)
+	cd chaos/runner && "$(CURDIR)/$(CHAOS_PY)" -m pytest -q
+
+.PHONY: chaos-list
+chaos-list: $(CHAOS_PY) ## Show the fault catalog
+	@$(CHAOS) list
+
+.PHONY: chaos-test
+chaos-test: tools $(CHAOS_PY) ## Dry run one fault: make chaos-test FAULT=F05 [TARGET=catalog] [INTENSITY=4]
+	@test -n "$(FAULT)" || { echo "usage: make chaos-test FAULT=F05 [TARGET=...] [INTENSITY=...] [SCREENSHOT_DIR=...]"; exit 1; }
+	GRAFANA_URL="http://localhost:$(GRAFANA_PORT)" $(CHAOS) inject $(FAULT) --check \
+	  $(if $(TARGET),--target '$(TARGET)') $(if $(INTENSITY),--intensity '$(INTENSITY)') \
+	  $(if $(SCREENSHOT_DIR),--on-symptom 'scripts/grafana-screenshot.sh "$(SCREENSHOT_DIR)"')
+
+.PHONY: chaos-run
+chaos-run: tools $(CHAOS_PY) ## Dataset run: every fault 5 times at random, about 70 h; sealed labels
+	@mkdir -p eval/seals
+	$(CHAOS) run --seal-out "eval/seals/$$(date -u +%Y%m%dT%H%M%SZ).json"
+
+.PHONY: chaos-cleanup
+chaos-cleanup: tools $(CHAOS_PY) ## Undo whatever an interrupted chaos run left behind
+	$(CHAOS) cleanup
+
 .PHONY: status
 status: tools ## Show ArgoCD applications, rollouts and pods
 	$(KUBECTL) --context kind-$(CLUSTER) -n argocd get applications

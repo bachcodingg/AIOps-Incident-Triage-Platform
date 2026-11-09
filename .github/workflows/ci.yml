@@ -46,6 +46,17 @@ jobs:
           curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin kyverno
       - run: make gitops-lint
 
+  # The fault catalog is validated (every template renders for every target and
+  # intensity) and chaos-runner is unit tested against a fake cluster.
+  chaos-unit:
+    name: chaos-runner and fault catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: make chaos-unit
+
   e2e:
     name: e2e on kind (make up, canary, policies, observability)
     needs: [unit, gitops-lint]

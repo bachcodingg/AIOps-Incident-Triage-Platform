@@ -1,0 +1,98 @@
+name: chaos
+
+# The week 5 dry run: every fault in chaos/catalog.yaml is injected once, on its
+# own fresh kind cluster, and must (1) be absent before, (2) show its symptom in
+# Prometheus while it runs, and (3) leave a system that recovers. A screenshot of
+# the symptom's dashboard is kept as an artifact for the runbooks.
+#
+# Each fault gets its own cluster so one fault's aftermath cannot hide or fake
+# another's symptom. It runs on pull requests that touch the chaos layer or the
+# fault flags, and by hand for any subset of faults.
+
+on:
+  workflow_dispatch:
+    inputs:
+      faults:
+        description: Fault ids, comma-separated, or "all"
+        default: all
+  pull_request:
+    paths:
+      - chaos/**
+      - scripts/grafana-screenshot.sh
+      - .github/workflows/chaos.yml
+      - services/*/app/faults.py
+      - services/indexer/indexer/faults.py
+      - services/gateway/src/app.ts
+      - services/catalog/src/main/java/dev/incidentlens/catalog/Faults.java
+      - services/catalog/src/main/java/dev/incidentlens/catalog/ReviewIndex.java
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  faults:
+    name: pick faults
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.pick.outputs.list }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pick
+        env:
+          WANTED: ${{ inputs.faults || 'all' }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          known = re.findall(r"^  - id: (F\d+)", open("chaos/catalog.yaml").read(), re.M)
+          wanted = os.environ["WANTED"].strip()
+          picked = known if wanted in ("", "all") else [f.strip().upper() for f in wanted.split(",")]
+          unknown = sorted(set(picked) - set(known))
+          assert not unknown, f"unknown faults: {unknown}"
+          print("list=" + json.dumps(picked))
+          PY
+
+  dry-run:
+    name: dry run ${{ matrix.fault }}
+    needs: faults
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fault: ${{ fromJSON(needs.faults.outputs.list) }}
+    env:
+      # ArgoCD syncs from GitHub, so it has to follow the branch under test.
+      REVISION: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - name: make up
+        run: make up
+      # A few minutes of normal traffic first, so rates and baselines exist.
+      - name: Let the load settle
+        run: sleep 180
+      - name: make chaos-test FAULT=${{ matrix.fault }}
+        run: make chaos-test FAULT=${{ matrix.fault }} SCREENSHOT_DIR=screenshots
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: symptom-${{ matrix.fault }}
+          path: screenshots/
+          if-no-files-found: warn
+      - name: Diagnostics
+        if: failure()
+        run: |
+          K="kubectl --context kind-incidentlens"
+          $K get nodes -o wide || true
+          $K -n argocd get applications || true
+          $K get pods -A -o wide | grep -v Running || true
+          $K -n chaos get all,stresschaos,networkchaos,podchaos || true
+          $K -n shopsearch get rollouts || true
+          $K -n shopsearch get events --sort-by=.lastTimestamp | tail -40 || true
+          $K -n chaos-mesh logs --tail=60 deploy/chaos-controller-manager || true
+          $K -n shopsearch logs --prefix --tail=40 -l app.kubernetes.io/part-of=shopsearch || true
