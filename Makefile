@@ -117,6 +117,7 @@ cluster: tools ## Create the kind cluster if it does not exist
 	    infra/kind/cluster.yaml > .bin/kind-cluster.yaml; \
 	  $(KIND) create cluster --name $(CLUSTER) --config .bin/kind-cluster.yaml --wait 120s; \
 	fi
+	@NODE=$(CLUSTER)-control-plane scripts/kind-inotify.sh
 
 .PHONY: load
 load: tools ## Load the built images into the kind node
