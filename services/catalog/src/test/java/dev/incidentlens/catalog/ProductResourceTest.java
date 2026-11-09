@@ -3,15 +3,20 @@ package dev.incidentlens.catalog;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
@@ -19,6 +24,9 @@ class ProductResourceTest {
 
     @InjectMock
     ChangePublisher publisher;
+
+    @Inject
+    EntityManager em;
 
     private static String body(String sku, String price) {
         return """
@@ -44,6 +52,30 @@ class ProductResourceTest {
         given().queryParam("category", "tablets")
                 .when().get("/products")
                 .then().statusCode(200).body("$", hasSize(3)).body("category", everyItem(equalTo("tablets")));
+    }
+
+    @Test
+    void lookupShowsTheAverageRatingAndListingsDoNot() {
+        QuarkusTransaction.requiringNew().run(() -> {
+            for (int stars : new int[] {5, 4, 4}) {
+                em.createNativeQuery("INSERT INTO review (product_id, stars) VALUES (7, :stars)")
+                        .setParameter("stars", stars).executeUpdate();
+            }
+        });
+        given().when().get("/products/7")
+                .then().statusCode(200).body("reviewCount", equalTo(3)).body("rating", equalTo(4.33f));
+        given().when().get("/products/8")
+                .then().statusCode(200).body("reviewCount", equalTo(0)).body("$", not(hasKey("rating")));
+        given().queryParam("size", 3).when().get("/products")
+                .then().statusCode(200).body("[0]", not(hasKey("rating"))).body("[0]", not(hasKey("reviewCount")));
+    }
+
+    @Test
+    void startupCreatesTheReviewIndex() {
+        var count = em.createNativeQuery(
+                        "SELECT count(*) FROM information_schema.indexes WHERE lower(index_name) = 'idx_review_product'")
+                .getSingleResult();
+        org.junit.jupiter.api.Assertions.assertTrue(((Number) count).longValue() > 0);
     }
 
     @Test

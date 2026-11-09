@@ -8,6 +8,7 @@ import threading
 import redis
 
 from . import core, telemetry
+from .faults import Faults
 from .catalog_client import fetch_all_products
 from .health import HealthState, serve
 
@@ -36,6 +37,7 @@ def run() -> None:
     health_port = int(os.getenv("HEALTH_PORT", "8081"))
 
     client = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=2.0)
+    faults = Faults.from_env()
     state = HealthState()
     telemetry.observe_readiness(lambda: state.ready)
     server = serve(state, health_port)
@@ -48,6 +50,7 @@ def run() -> None:
 
     while not stop.is_set():
         state.beat()
+        faults.on_poll()
         try:
             applied = core.consume_once(client, timeout_seconds=5)
             if applied is not None:

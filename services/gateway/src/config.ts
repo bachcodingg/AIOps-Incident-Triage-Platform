@@ -6,6 +6,7 @@ export interface Config {
   upstreamTimeoutMs: number;
   logLevel: string;
   faultErrorRate: number;
+  faultLatencyMs: number;
 }
 
 function intFromEnv(value: string | undefined, fallback: number, name: string): number {
@@ -17,7 +18,19 @@ function intFromEnv(value: string | undefined, fallback: number, name: string): 
   return parsed;
 }
 
-// Chaos flag for fault F02: share of API requests answered with a 500.
+function nonNegativeIntFromEnv(value: string | undefined, name: string): number {
+  if (value === undefined || value === "") return 0;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a whole number of 0 or more, got "${value}"`);
+  }
+  return parsed;
+}
+
+// Chaos flags. A bad release (chaos/catalog.yaml) is the normal image with one
+// of these baked in, so the release history shows only a new image tag.
+//   FAULT_ERROR_RATE   F02: share of API requests that fail with a 500
+//   FAULT_LATENCY_MS   F03: extra time spent on every API request
 function rateFromEnv(value: string | undefined, name: string): number {
   if (value === undefined || value === "") return 0;
   const parsed = Number.parseFloat(value);
@@ -36,5 +49,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     upstreamTimeoutMs: intFromEnv(env.UPSTREAM_TIMEOUT_MS, 2000, "UPSTREAM_TIMEOUT_MS"),
     logLevel: env.LOG_LEVEL ?? "info",
     faultErrorRate: rateFromEnv(env.FAULT_ERROR_RATE, "FAULT_ERROR_RATE"),
+    faultLatencyMs: nonNegativeIntFromEnv(env.FAULT_LATENCY_MS, "FAULT_LATENCY_MS"),
   };
 }

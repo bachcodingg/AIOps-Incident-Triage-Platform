@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from . import telemetry
+from .faults import Faults
 from .search import search, tokenize
 from .store import RedisStore, Store
 
@@ -21,6 +22,7 @@ telemetry.configure()
 log = logging.getLogger("search-api")
 
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "60"))
+FAULTS = Faults.from_env()
 
 
 @asynccontextmanager
@@ -69,6 +71,7 @@ def search_endpoint(
 ) -> dict:
     if not tokenize(q):
         raise HTTPException(status_code=400, detail="query has no searchable terms")
+    FAULTS.on_search({"boosts": {}})
     try:
         version, index = store.index()
         # The index version is part of the cache key, so a catalog change
