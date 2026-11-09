@@ -5,6 +5,17 @@ storage:
   size: 1Gi
   className: "" # empty means the cluster's default StorageClass (gp3 on EKS, see gitops/apps)
 
+# Fault F12 turns every product lookup into a sequential scan of two million
+# rows, from up to 40 catalog connections at once. At 500m and 256Mi PostgreSQL
+# did not just get slow: it failed its liveness probe (answered by the
+# CloudNativePG instance manager in the same container) and crash-looped, so the
+# rolled-back catalog could not start. The fault is meant to saturate the
+# database, not kill it.
 resources:
-  requests: {cpu: 100m, memory: 128Mi}
-  limits: {cpu: 500m, memory: 256Mi}
+  requests: {cpu: 250m, memory: 256Mi}
+  limits: {cpu: "1", memory: 512Mi}
+
+# PostgreSQL settings (strings, as CloudNativePG wants them).
+parameters:
+  # With one CPU, parallel workers only add processes and memory per query.
+  max_parallel_workers_per_gather: "0"

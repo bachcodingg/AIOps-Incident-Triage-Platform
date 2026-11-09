@@ -94,5 +94,8 @@ jobs:
           $K -n chaos get all,stresschaos,networkchaos,podchaos || true
           $K -n shopsearch get rollouts || true
           $K -n shopsearch get events --sort-by=.lastTimestamp | tail -40 || true
+          $K -n shopsearch describe pods -l cnpg.io/cluster=postgres | grep -E -A8 '^Name:|Last State' || true
+          $K -n shopsearch logs --tail=40 -l cnpg.io/cluster=postgres --previous || true
+          $K -n shopsearch logs --tail=40 -l cnpg.io/cluster=postgres || true
           $K -n chaos-mesh logs --tail=60 deploy/chaos-controller-manager || true
           $K -n shopsearch logs --prefix --tail=40 -l app.kubernetes.io/part-of=shopsearch || true
