@@ -17,7 +17,8 @@ service:
 env:
   SEARCH_API_URL: http://search-api:8000
   CATALOG_URL: http://catalog:8080
-  FAULT_ERROR_RATE: "0" # chaos flag for fault F02
+  # No FAULT_* defaults here: a pod variable overrides the image's ENV, and the
+  # bad releases of chaos/ (F02, F03) bake their fault flag into the image.
 
 extraEnv: []
 
