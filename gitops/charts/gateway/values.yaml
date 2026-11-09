@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/bachcodingg/incidentlens/gateway
-  tag: unreleased # release.yml opens the pull request that updates tag and digest
-  digest: ""
+  tag: sha-1d05aae5580892b684354737e51d9aadd030aa2f
+  digest: "sha256:9e97d03c4db8bac3bd65a90e5128cbd6ecb435b937c9351020aebdfdea90ad08"
   pullPolicy: IfNotPresent
 
 runAsUser: 1000 # the `node` user of the base image
