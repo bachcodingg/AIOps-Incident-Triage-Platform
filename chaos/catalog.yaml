@@ -130,9 +130,11 @@ faults:
       gateway: {}
     root_cause: {component: gateway, category: load}
     correct_action: scale_out
+    # Against the 10 minutes before the last 5: recent enough to exist on a
+    # cluster that has served traffic for only a few minutes.
     symptom: |
       sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[2m]))
-        > 2 * sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[10m] offset 15m))
+        > 2 * sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[10m] offset 5m))
     dashboard: {uid: shopsearch-red, vars: {service: gateway}}
     runbook: F06-traffic-spike.md
 
