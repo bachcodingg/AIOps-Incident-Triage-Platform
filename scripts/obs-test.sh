@@ -9,7 +9,7 @@
 #   3. logs: the gateway's log line for that request is in Loki, under the
 #      same trace id
 #   4. SLOs: Sloth's recording rules and burn-rate alerts are loaded
-#   5. Grafana: up, with the RED, SLO and cost dashboards
+#   5. Grafana: up, with the RED, SLO, platform and cost dashboards
 #
 # Backends are reached through the API server's service proxy, so no ports
 # need forwarding. Needs curl and python3 (or python).
@@ -116,7 +116,7 @@ echo "Grafana"
 grafana_up() { svc kube-prometheus-stack-grafana:80 /api/health | grep -q '"database": *"ok"'; }
 dashboard() { svc kube-prometheus-stack-grafana:80 "/api/search?type=dash-db" | grep -q "\"uid\":\"$1\""; }
 retry "Grafana is up" grafana_up
-for uid in shopsearch-red shopsearch-slo incidentlens-cost; do
+for uid in shopsearch-red shopsearch-slo shopsearch-platform incidentlens-cost; do
   retry "dashboard $uid is provisioned" dashboard "$uid"
 done
 

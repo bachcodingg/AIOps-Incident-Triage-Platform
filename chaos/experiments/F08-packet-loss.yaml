@@ -1,0 +1,25 @@
+# F08 packet loss on the link ${source} -> ${destination}. Put on the
+# destination's replies to the source, for the reason given in F07.
+# TCP retransmits what is lost, so the symptom is latency spikes of 200 ms
+# (the minimum retransmission timeout) and more, and timeouts at the top end.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces: [${destination_namespace}]
+    labelSelectors: ${destination_labels}
+  direction: to
+  target:
+    mode: all
+    selector:
+      namespaces: [${source_namespace}]
+      labelSelectors: ${source_labels}
+  loss:
+    loss: "${intensity}"
+    correlation: "25"
+  duration: ${duration}

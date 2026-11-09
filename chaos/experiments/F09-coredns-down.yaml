@@ -1,0 +1,17 @@
+# F09 DNS failures: every CoreDNS pod is held on a pause image, so the cluster
+# DNS Service has no ready endpoint. New lookups fail; connections that are
+# already open keep working, which is why the symptom builds up over minutes.
+# (DNSChaos would be the obvious tool, but it edits /etc/resolv.conf inside the
+# target containers, and every ShopSearch container has a read-only root.)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  action: pod-failure
+  mode: all
+  selector:
+    namespaces: [${target_namespace}]
+    labelSelectors: ${target_labels}
+  duration: ${duration}

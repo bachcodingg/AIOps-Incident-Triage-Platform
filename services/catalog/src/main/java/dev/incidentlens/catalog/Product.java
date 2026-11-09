@@ -1,5 +1,6 @@
 package dev.incidentlens.catalog;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -9,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -39,6 +41,16 @@ public class Product extends PanacheEntityBase {
 
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
+
+    // Filled in for a single-product lookup only, from the review table, so a
+    // listing (and the indexer's full reindex) looks exactly as before.
+    @Transient
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Double rating;
+
+    @Transient
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Long reviewCount;
 
     @PrePersist
     @PreUpdate

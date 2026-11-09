@@ -68,3 +68,25 @@ spec:
       image: quay.io/someone/miner:1.0
       resources:
         limits: {cpu: 100m, memory: 64Mi}
+---
+# What Chaos Mesh's pod-failure (fault F10) turns a Redis pod into.
+apiVersion: v1
+kind: Pod
+metadata: {name: chaos-pause, namespace: shopsearch}
+spec:
+  containers:
+    - name: redis
+      image: registry.k8s.io/pause:3.10
+      resources:
+        limits: {cpu: 250m, memory: 128Mi}
+---
+# The pause image, but not the pinned tag.
+apiVersion: v1
+kind: Pod
+metadata: {name: chaos-pause-latest, namespace: shopsearch}
+spec:
+  containers:
+    - name: redis
+      image: registry.k8s.io/pause:latest
+      resources:
+        limits: {cpu: 250m, memory: 128Mi}

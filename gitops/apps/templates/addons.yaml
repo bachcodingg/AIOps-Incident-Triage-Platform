@@ -23,6 +23,10 @@ spec:
       releaseName: {{ $name }}
       valuesObject:
         {{- toYaml $addon.values | nindent 8 }}
+  {{- with $addon.ignoreDifferences }}
+  ignoreDifferences:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   syncPolicy:
     automated:
       prune: true
@@ -30,6 +34,9 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true # some CRDs are too large for client-side apply
+      {{- if $addon.ignoreDifferences }}
+      - RespectIgnoreDifferences=true # keep the ignored fields as they are live, on every sync
+      {{- end }}
     retry:
       limit: 5
       backoff: {duration: 10s, factor: 2, maxDuration: 3m}

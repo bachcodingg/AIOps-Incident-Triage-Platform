@@ -17,6 +17,11 @@ spec:
     {{- with .Values.storage.className }}
     storageClass: {{ . }}
     {{- end }}
+  {{- with .Values.parameters }}
+  postgresql:
+    parameters:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
   resources:
     {{- toYaml .Values.resources | nindent 4 }}
 ---

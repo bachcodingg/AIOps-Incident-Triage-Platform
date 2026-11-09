@@ -116,6 +116,10 @@ spec:
         runAsUser: {{ .Values.runAsUser }}
         seccompProfile:
           type: RuntimeDefault
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
