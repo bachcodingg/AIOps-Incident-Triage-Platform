@@ -445,6 +445,30 @@ addons:
         requests: {cpu: 20m, memory: 48Mi}
         limits: {memory: 96Mi}
 
+  # Certificates for Chaos Mesh's webhook and daemon, issued once and kept, where
+  # the chart would otherwise generate new ones on every render (see chaos-mesh).
+  cert-manager:
+    enabled: true
+    wave: -3
+    namespace: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: v1.21.3
+    values:
+      crds: {enabled: true, keep: true}
+      startupapicheck: {enabled: false} # a Helm hook; the wave's health check waits instead
+      resources:
+        requests: {cpu: 10m, memory: 48Mi}
+        limits: {memory: 128Mi}
+      webhook:
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 96Mi}
+      cainjector:
+        resources:
+          requests: {cpu: 10m, memory: 48Mi}
+          limits: {memory: 192Mi}
+
   kyverno:
     enabled: true
     wave: -2
@@ -472,10 +496,14 @@ addons:
     repoURL: https://charts.chaos-mesh.org
     chart: chaos-mesh
     version: 2.8.8
-    # The chart generates its TLS certificates on every render, and a random
-    # `rollme` pod annotation to restart the pods that use them. ArgoCD renders
-    # it on every refresh, so without this every sync would rotate the certs and
-    # restart Chaos Mesh, breaking the webhook in between.
+    # Left to itself, the chart generates a new CA and new certificates on every
+    # render, and ArgoCD renders on every refresh. Ignoring those fields was not
+    # enough: a Secret and the webhooks created by different sync attempts end
+    # up with different CAs, and every experiment is then refused with "x509:
+    # certificate signed by unknown authority". cert-manager issues them once
+    # instead (webhook.certManager below), and its cainjector fills caBundle.
+    # The random `rollme` pod annotation and the chaosd client secret (unused,
+    # chaosd is for physical machines) are still rendered anew each time.
     ignoreDifferences:
       - group: apps
         kind: Deployment
@@ -485,18 +513,6 @@ addons:
         kind: DaemonSet
         name: chaos-daemon
         jsonPointers: [/spec/template/metadata/annotations/rollme]
-      - kind: Secret
-        namespace: chaos-mesh
-        name: chaos-mesh-webhook-certs
-        jsonPointers: [/data]
-      - kind: Secret
-        namespace: chaos-mesh
-        name: chaos-mesh-daemon-certs
-        jsonPointers: [/data]
-      - kind: Secret
-        namespace: chaos-mesh
-        name: chaos-mesh-daemon-client-certs
-        jsonPointers: [/data]
       - kind: Secret
         namespace: chaos-mesh
         name: chaos-mesh-chaosd-client-certs
@@ -509,6 +525,8 @@ addons:
         jqPathExpressions: [".webhooks[]?.clientConfig.caBundle"]
     values:
       enableProfiling: false
+      # Webhook and chaos-daemon mTLS certificates from cert-manager (wave -3).
+      webhook: {certManager: {enabled: true}}
       controllerManager:
         replicaCount: 1
         # Pod-failure swaps the container image for this one. A pinned tag from
