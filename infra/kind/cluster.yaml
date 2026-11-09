@@ -7,6 +7,13 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: incidentlens
 nodes:
   - role: control-plane
+    # kind only drops the control-plane NoSchedule taint when there are no
+    # workers. With a worker it stays, and the platform has nowhere to run.
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          taints: []
     extraPortMappings:
       # gateway NodePort -> http://localhost:8080 on the host
       - containerPort: 30080
