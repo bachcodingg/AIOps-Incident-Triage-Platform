@@ -1,30 +1,10 @@
 import json
 
-import fakeredis
-import pytest
 import redis
 from fastapi.testclient import TestClient
 
 from app.main import app, get_store
 from app.store import DOCS_KEY, VERSION_KEY, RedisStore
-
-
-@pytest.fixture
-def fake_redis():
-    client = fakeredis.FakeRedis(decode_responses=True)
-    client.hset(DOCS_KEY, mapping={
-        "1": json.dumps({"name": "Gaming Laptop", "category": "laptops", "description": "fast", "price": 1299.0}),
-        "2": json.dumps({"name": "Wireless Mouse", "category": "accessories", "description": "quiet", "price": 29.0}),
-    })
-    client.set(VERSION_KEY, 1)
-    return client
-
-
-@pytest.fixture
-def client(fake_redis):
-    app.dependency_overrides[get_store] = lambda: RedisStore(fake_redis)
-    yield TestClient(app)
-    app.dependency_overrides.clear()
 
 
 def duration_points(reader):

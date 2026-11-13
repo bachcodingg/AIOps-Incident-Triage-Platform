@@ -1,113 +1,252 @@
-# Fault catalog, draft (week 1). chaos-runner reads this file in week 5.
+# Fault catalog: the single source for fault IDs, how each one is injected,
+# its root-cause label, the correct action, and the symptom that proves it
+# happened. chaos-runner (chaos/runner) reads it; so do the dry run
+# (`make chaos-test`) and the runbooks in docs/runbooks/.
 #
-# Each fault runs 5 times at different intensities and times of day:
-# 14 x 5 = 70 incidents, plus 20 fault-free windows for false-alarm rates.
+# Templating: ${target}, ${intensity}, ${duration} and, for links written as
+# "a->b", ${source} and ${destination}. A target's `vars` add more, and its
+# `intensities` replace the fault's.
 #
-# root_cause is the label the triage agent must reproduce: <component> + <category>.
+# root_cause is what the triage agent must reproduce: <component> + <category>.
 # correct_action is one of: rollback, restart, scale_out, none_escalate, none_verify.
-# The labels written at run time go to a sealed file the AIOps layer cannot read.
+# The labels written at run time go to a sealed file the AIOps layer cannot read
+# (chaos/README.md#sealed-ground-truth).
+
+version: 1
+
+# A dataset run (week 6): every fault `repeats` times with its intensities
+# cycled and targets drawn at random, plus fault-free windows, in random order.
+# 14 x 5 = 70 incidents and 20 fault-free windows take about 70 hours.
+schedule:
+  repeats: 5
+  fault_free_windows: 20
+  fault_free_minutes: 30
+  gap_minutes: [10, 40]           # quiet time after recovery, drawn per incident
+  recovery_timeout_minutes: 15
+  # Harmless releases in quiet time, through the same path as the bad ones,
+  # so "something was deployed" is not on its own a tell.
+  benign_releases: 15
+
+# How each component's pods are found, and the job its metrics carry.
+components:
+  gateway:    {namespace: shopsearch, labels: {app.kubernetes.io/name: gateway}, kind: rollout}
+  search-api: {namespace: shopsearch, labels: {app.kubernetes.io/name: search-api}, kind: rollout}
+  catalog:    {namespace: shopsearch, labels: {app.kubernetes.io/name: catalog}, kind: rollout}
+  indexer:    {namespace: shopsearch, labels: {app.kubernetes.io/name: indexer}, kind: rollout}
+  redis:      {namespace: shopsearch, labels: {app.kubernetes.io/name: redis}}
+  postgres:   {namespace: shopsearch, labels: {cnpg.io/cluster: postgres}}
+  coredns:    {namespace: kube-system, labels: {k8s-app: kube-dns}}
 
 faults:
   - id: F01
-    name: Crash loop after config change
-    inject: {kind: bad-release, how: "broken env var in the release"}
-    targets: [gateway, search-api, catalog, indexer]
-    root_cause: {component: "<target>", category: bad-release}
+    name: Crash loop after a config change
+    injector: config-release   # a typo in one environment variable, through ArgoCD
+    duration: [8m, 12m]
+    targets:
+      gateway:    {env: {RATE_LIMIT_PER_MINUTE: unlimited}}
+      search-api: {env: {CACHE_TTL_SECONDS: "60s"}}
+      catalog:    {env: {QUARKUS_DATASOURCE_JDBC_URL: "jdbc:postgresql://postgres-primary:5432/catalog"}}
+      indexer:    {env: {REDIS_URL: "redis//redis:6379/0"}}
+    root_cause: {component: "${target}", category: bad-release}
     correct_action: rollback
+    symptom: sum(increase(kube_pod_container_status_restarts_total{namespace="shopsearch",container="${target}"}[5m])) >= 2
+    dashboard: {uid: shopsearch-red, vars: {service: "${target}"}}
+    runbook: F01-crash-loop.md
 
   - id: F02
-    name: Bad release, 5% HTTP 500
-    inject: {kind: bad-release, how: "image with FAULT_ERROR_RATE flag on"}  # gateway has it; the others in week 5
-    targets: [gateway, search-api, catalog]
-    intensities: [0.02, 0.05, 0.10]
-    root_cause: {component: "<target>", category: bad-release}
+    name: Bad release, HTTP 500s
+    injector: image-release    # the normal image with the flag baked in, under a new tag
+    duration: [10m, 15m]
+    intensities: ["0.02", "0.05", "0.10"]
+    targets:
+      gateway:    {env: {FAULT_ERROR_RATE: "${intensity}"}}
+      search-api: {env: {FAULT_ERROR_RATE: "${intensity}"}}
+      catalog:    {env: {FAULT_ERROR_RATE: "${intensity}"}}
+    root_cause: {component: "${target}", category: bad-release}
     correct_action: rollback
+    symptom: |
+      sum(rate(http_server_request_duration_seconds_count{job="shopsearch/${target}",http_response_status_code=~"5.."}[2m]))
+        / sum(rate(http_server_request_duration_seconds_count{job="shopsearch/${target}"}[2m])) > 0.01
+    dashboard: {uid: shopsearch-red, vars: {service: "${target}"}}
+    runbook: F02-error-release.md
 
   - id: F03
-    name: Slow release, p95 +250 ms
-    inject: {kind: bad-release, how: "image with an added sleep"}
-    targets: [gateway, search-api, catalog]
-    intensities: [150ms, 250ms, 500ms]
-    root_cause: {component: "<target>", category: bad-release}
+    name: Slow release
+    injector: image-release
+    duration: [10m, 15m]
+    intensities: ["150", "250", "500"]  # milliseconds per request
+    targets:
+      gateway:    {env: {FAULT_LATENCY_MS: "${intensity}"}}
+      search-api: {env: {FAULT_LATENCY_MS: "${intensity}"}}
+      catalog:    {env: {FAULT_LATENCY_MS: "${intensity}"}}
+    root_cause: {component: "${target}", category: bad-release}
     correct_action: rollback
+    symptom: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job="shopsearch/${target}"}[2m]))) > 0.12
+    dashboard: {uid: shopsearch-red, vars: {service: "${target}"}}
+    runbook: F03-slow-release.md
 
   - id: F04
     name: Memory leak
-    inject: {kind: bad-release, how: "worker image that leaks"}
-    targets: [indexer, search-api]
-    root_cause: {component: "<target>", category: resource}
-    correct_action: restart  # then rollback
+    injector: image-release
+    duration: [15m, 20m]
+    targets:
+      # KB kept per search: at 3-6 searches a second, OOM in 5 to 25 minutes.
+      search-api: {env: {FAULT_LEAK_KB_PER_REQUEST: "${intensity}"}, intensities: ["32", "64", "128"]}
+      # KB kept per poll, one poll every 5 s when idle.
+      indexer:    {env: {FAULT_LEAK_KB_PER_POLL: "${intensity}"}, intensities: ["1024", "2048", "4096"]}
+    root_cause: {component: "${target}", category: resource}
+    correct_action: restart  # buys time; the release still has to be rolled back
+    symptom: |
+      max(container_memory_working_set_bytes{namespace="shopsearch",container="${target}"})
+        / max(kube_pod_container_resource_limits{namespace="shopsearch",container="${target}",resource="memory"}) > 0.8
+      or sum(increase(kube_pod_container_status_restarts_total{namespace="shopsearch",container="${target}"}[10m])) > 0
+    dashboard: {uid: shopsearch-red, vars: {service: "${target}"}}
+    runbook: F04-memory-leak.md
 
   - id: F05
     name: CPU saturation
-    inject: {kind: chaos-mesh, resource: StressChaos}
-    targets: [search-api, catalog]
-    intensities: [2 workers, 4 workers]
-    root_cause: {component: "<target>", category: resource}
+    injector: chaos-mesh
+    experiment: F05-cpu-stress.yaml
+    duration: [10m, 15m]
+    intensities: ["2", "4"]  # stress workers in each pod
+    targets:
+      search-api: {}
+      catalog: {}
+    root_cause: {component: "${target}", category: resource}
     correct_action: scale_out
+    symptom: |
+      max(sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="shopsearch",container="${target}"}[2m]))
+        / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="shopsearch",container="${target}"}[2m]))) > 0.25
+    dashboard: {uid: shopsearch-platform}
+    runbook: F05-cpu-saturation.md
 
   - id: F06
-    name: Traffic spike 5x
-    inject: {kind: load, how: "k6 burst"}
-    targets: [gateway]
-    intensities: [3x, 5x, 8x]
+    name: Traffic spike
+    injector: load
+    experiment: F06-traffic-spike.yaml
+    duration: [10m, 15m]
+    intensities: ["3", "5", "8"]  # times the current gateway rate
+    targets:
+      gateway: {}
     root_cause: {component: gateway, category: load}
     correct_action: scale_out
+    # Against the 10 minutes before the last 5: recent enough to exist on a
+    # cluster that has served traffic for only a few minutes.
+    symptom: |
+      sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[2m]))
+        > 2 * sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[10m] offset 5m))
+    dashboard: {uid: shopsearch-red, vars: {service: gateway}}
+    runbook: F06-traffic-spike.md
 
   - id: F07
-    name: Network latency between 2 services
-    inject: {kind: chaos-mesh, resource: NetworkChaos, action: delay}
-    targets: [gateway->search-api, search-api->redis, catalog->postgres]
-    intensities: [100ms, 300ms]
-    root_cause: {component: "<link>", category: network}
+    name: Network latency between two services
+    injector: chaos-mesh
+    experiment: F07-network-delay.yaml
+    duration: [10m, 15m]
+    intensities: ["100ms", "300ms"]
+    targets:
+      gateway->search-api: {vars: {matcher: 'job="shopsearch/gateway",http_route="/api/search"'}}
+      search-api->redis:   {vars: {matcher: 'job="shopsearch/search-api"'}}
+      catalog->postgres:   {vars: {matcher: 'job="shopsearch/catalog"'}}
+    root_cause: {component: "${source}->${destination}", category: network}
     correct_action: none_escalate
+    symptom: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{${matcher}}[2m]))) > 0.09
+    dashboard: {uid: shopsearch-red, vars: {service: "${source}"}}
+    runbook: F07-network-latency.md
 
   - id: F08
-    name: Packet loss
-    inject: {kind: chaos-mesh, resource: NetworkChaos, action: loss}
-    targets: [gateway->search-api, catalog->postgres]
-    intensities: ["10%", "20%"]
-    root_cause: {component: "<link>", category: network}
+    name: Packet loss between two services
+    injector: chaos-mesh
+    experiment: F08-packet-loss.yaml
+    duration: [10m, 15m]
+    intensities: ["10", "20"]  # percent
+    targets:
+      gateway->search-api: {vars: {matcher: 'job="shopsearch/gateway",http_route="/api/search"'}}
+      catalog->postgres:   {vars: {matcher: 'job="shopsearch/catalog"'}}
+    root_cause: {component: "${source}->${destination}", category: network}
     correct_action: none_escalate
+    symptom: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{${matcher}}[2m]))) > 0.15
+    dashboard: {uid: shopsearch-red, vars: {service: "${source}"}}
+    runbook: F08-packet-loss.md
 
   - id: F09
-    name: DNS failures
-    inject: {kind: chaos-mesh, resource: DNSChaos, action: error}
-    targets: [cluster]
+    name: DNS failures (CoreDNS down)
+    injector: chaos-mesh
+    experiment: F09-coredns-down.yaml
+    duration: [6m, 10m]
+    targets:
+      coredns: {}
     root_cause: {component: cluster, category: dns}
     correct_action: none_escalate
+    symptom: sum(kube_deployment_status_replicas_available{namespace="kube-system",deployment="coredns"}) == 0
+    dashboard: {uid: shopsearch-platform}
+    runbook: F09-dns-failures.md
 
   - id: F10
     name: Redis down
-    inject: {kind: chaos-mesh, resource: PodChaos, how: "kill and block restart"}
-    targets: [redis]
+    injector: chaos-mesh
+    experiment: F10-redis-down.yaml  # pod-failure: the container is held on a pause image
+    duration: [6m, 10m]
+    targets:
+      redis: {}
     root_cause: {component: redis, category: dependency}
     correct_action: restart
+    # Redis keeps no data on disk, so it comes back empty. Until the indexer's
+    # next full reindex every search finds nothing; the runner triggers one so
+    # the next incident starts from a working system.
+    after: [reindex]
+    symptom: max(kube_pod_container_status_ready{namespace="shopsearch",container="redis"}) == 0
+    dashboard: {uid: shopsearch-platform}
+    runbook: F10-redis-down.md
 
   - id: F11
-    name: DB connection pool exhaustion
-    inject: {kind: bad-release, how: "catalog release with QUARKUS_DATASOURCE_JDBC_MAX_SIZE=2"}
-    targets: [catalog]
+    name: Database connection pool exhaustion
+    injector: image-release
+    duration: [10m, 15m]
+    intensities: ["0.02", "0.05", "0.10"]  # share of lookups that leak a connection
+    targets:
+      catalog: {env: {FAULT_CONNECTION_LEAK_RATE: "${intensity}"}}
     root_cause: {component: catalog, category: bad-release}
     correct_action: rollback
+    symptom: |
+      sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id",http_response_status_code=~"5.."}[2m]))
+        / sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route="/api/products/:id"}[2m])) > 0.05
+    dashboard: {uid: shopsearch-red, vars: {service: catalog}}
+    runbook: F11-connection-pool.md
 
   - id: F12
-    name: Slow DB query
-    inject: {kind: bad-release, how: "migration that drops idx_product_category"}
-    targets: [postgres]
+    name: Slow database query (dropped index)
+    injector: image-release
+    duration: [10m, 15m]
+    targets:
+      catalog: {env: {FAULT_DROP_REVIEW_INDEX: "true"}}
     root_cause: {component: postgres, category: bad-release}
-    correct_action: rollback
+    correct_action: rollback  # a normal catalog release recreates the index on start
+    symptom: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job="shopsearch/catalog"}[2m]))) > 0.25
+    dashboard: {uid: shopsearch-red, vars: {service: catalog}}
+    runbook: F12-slow-query.md
 
   - id: F13
-    name: Disk filling on DB volume
-    inject: {kind: chaos-mesh, resource: IOChaos, how: "or a file writer sidecar"}
-    targets: [postgres]
+    name: Disk filling on the database volume
+    injector: sql-fill   # a runaway table in the catalog database
+    duration: [10m, 15m]
+    intensities: ["10", "25"]  # MB per minute
+    targets:
+      postgres: {}
     root_cause: {component: postgres, category: resource}
     correct_action: none_escalate
+    symptom: deriv(sum(cnpg_pg_database_size_bytes{datname="catalog"})[5m:30s]) > 50000
+    dashboard: {uid: shopsearch-platform}
+    runbook: F13-disk-filling.md
 
   - id: F14
     name: Node loss
-    inject: {kind: infra, how: "terminate a worker node"}
-    targets: [node]
+    injector: node-stop  # the kind worker's container is stopped, then started again
+    duration: [5m, 8m]
+    targets:
+      worker: {}
     root_cause: {component: node, category: infrastructure}
-    correct_action: none_verify  # self-heals; verify recovery
+    correct_action: none_verify  # pods move or the node returns; check that they did
+    symptom: min(kube_node_status_condition{condition="Ready",status="true"}) == 0
+    dashboard: {uid: shopsearch-platform}
+    runbook: F14-node-loss.md

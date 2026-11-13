@@ -9,6 +9,7 @@ allowedImages:
   - ghcr.io/cloudnative-pg/*
   - redis:*
   - grafana/k6:*
+  - registry.k8s.io/pause:* # Chaos Mesh pod-failure (F10) runs it in place of the real image
 
 # `make up` builds images locally, so they cannot be signed. Only the kind
 # environment sets this, and only for the incidentlens/ prefix.

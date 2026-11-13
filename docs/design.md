@@ -92,28 +92,29 @@ because it catches a slow burn two days before the 3 d window does.
 
 Static thresholds (CPU > 80%, error rate > 5%) are kept only as baseline B1.
 
-## 5. Fault catalog (draft)
+## 5. Fault catalog
 
 14 fault types, 5 runs each at different intensities and times of day = 70
-incidents, plus 20 fault-free windows. Machine-readable form:
-[`chaos/catalog.yaml`](../chaos/catalog.yaml).
+incidents, plus 20 fault-free windows. Machine-readable form, with targets,
+intensities and the symptom query of each: [`chaos/catalog.yaml`](../chaos/catalog.yaml).
+How they are injected: section 10 and [chaos/README.md](../chaos/README.md).
 
 | ID | Fault | Injection | Root-cause label | Correct action |
 |---|---|---|---|---|
 | F01 | Crash loop after config change | broken env var in release | service + bad-release | rollback |
-| F02 | Bad release, 5% HTTP 500 | image with fault flag | service + bad-release | rollback |
-| F03 | Slow release, p95 +250 ms | image with added sleep | service + bad-release | rollback |
-| F04 | Memory leak | leaking worker image | service + resource | restart, then rollback |
+| F02 | Bad release, 2-10% HTTP 500 | image with a fault flag baked in | service + bad-release | rollback |
+| F03 | Slow release, +150 to 500 ms | image with an added sleep | service + bad-release | rollback |
+| F04 | Memory leak | image that keeps memory per request (search-api) or per poll (indexer) | service + resource | restart, then rollback |
 | F05 | CPU saturation | StressChaos | service + resource | scale_out |
-| F06 | Traffic spike 5x | k6 burst | gateway + load | scale_out |
-| F07 | Network latency between 2 services | NetworkChaos delay 300 ms | link + network | none_escalate |
-| F08 | Packet loss | NetworkChaos loss 20% | link + network | none_escalate |
-| F09 | DNS failures | DNSChaos error | cluster + dns | none_escalate |
-| F10 | Redis down | PodChaos kill + block restart | redis + dependency | restart |
-| F11 | DB connection pool exhaustion | release with pool size 2 | service + bad-release | rollback |
-| F12 | Slow DB query | migration drops an index | postgres + bad-release | rollback |
-| F13 | Disk filling on DB volume | IOChaos / file writer | postgres + resource | none_escalate |
-| F14 | Node loss | terminate a worker node | node + infrastructure | none (self-heals), verify |
+| F06 | Traffic spike 3-8x | k6 pods, each under the per-client rate limit | gateway + load | scale_out |
+| F07 | Network latency between 2 services | NetworkChaos delay 100 or 300 ms | link + network | none_escalate |
+| F08 | Packet loss | NetworkChaos loss 10 or 20% | link + network | none_escalate |
+| F09 | DNS failures | PodChaos pod-failure on CoreDNS | cluster + dns | none_escalate |
+| F10 | Redis down | PodChaos pod-failure (held on a pause image) | redis + dependency | restart |
+| F11 | DB connection pool exhaustion | release that leaks connections | service + bad-release | rollback |
+| F12 | Slow DB query | release that drops the review index | postgres + bad-release | rollback |
+| F13 | Disk filling on DB volume | a table growing 10 or 25 MB/min | postgres + resource | none_escalate |
+| F14 | Node loss | stop the kind worker node | node + infrastructure | none (self-heals), verify |
 
 ## 6. Evaluation plan
 
@@ -226,7 +227,34 @@ Known gaps after week 4:
 - The single-binary `grafana/tempo` chart is marked deprecated upstream. It
   still works at the pinned version; moving to its successor is a follow-up.
 
-## 10. Risks
+## 10. Chaos (week 5)
+
+`chaos-runner` (Python, [chaos/runner](../chaos/runner)) injects the faults in
+the catalog, one at a time: on its own (`make chaos-test FAULT=F05`, the dry
+run) or as a dataset run on a seeded random schedule (`make chaos-run`). It
+waits for a healthy system, injects, holds for the duration, stops, waits for
+recovery and writes a label with the real timestamps. Operating details and the
+reasoning behind each injection: [chaos/README.md](../chaos/README.md).
+
+| Decision | Why |
+|---|---|
+| Bad releases are the normal image with a `FAULT_*` variable baked in, under a new tag | the release history shows a tag change, like a real release; the fault fails like a real bug, with nothing saying "injected" |
+| Bad releases are promoted past the canary, and so are 15 benign releases per run | the canary already catches them (week 3); the dataset needs releases that got past it, and a deploy must not be a tell on its own |
+| Labels outside the repository, hash-chained, head committed | the AIOps layer reads the repository; the head makes a later edit to any label detectable |
+| Chaos objects in their own `chaos` namespace | the agent's tools (week 8) can be denied that namespace without losing anything they need |
+| F09 takes CoreDNS down instead of using DNSChaos | DNSChaos edits `/etc/resolv.conf`, which is read-only in containers with a read-only root |
+| F07/F08 delay or drop the destination's replies | kube-proxy rewrites the ClusterIP outside the calling pod, so only replies carry pod IPs a filter can match |
+| F11 leaks connections; F12 drops an index on a 2M-row `review` table | at this load a pool of 2, or an index on 40 rows, would cause nothing to measure |
+| kind gets a tainted worker that only the stateless services tolerate | node loss (F14) needs a node to lose, and must not take the telemetry or the data stores with it |
+| Chaos Mesh through ArgoCD, with its generated certificates ignored in the diff | the chart makes new certificates and a random pod annotation on every render, which would otherwise restart it on every sync |
+
+The dry run is the week's "done when": every fault must be absent before,
+visible in Prometheus while it runs, and gone after recovery. The
+[chaos workflow](../.github/workflows/chaos.yml) runs it for all 14 faults, each
+on a fresh cluster, and keeps a Grafana screenshot of each symptom; the
+runbooks in [docs/runbooks](runbooks/) show them.
+
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -236,7 +264,7 @@ Known gaps after week 4:
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 11. Open questions
+## 12. Open questions
 
 - Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM?
 - Is the AWS free plan allowed to create EKS, or does each session need paid mode?

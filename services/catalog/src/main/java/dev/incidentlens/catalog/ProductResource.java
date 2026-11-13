@@ -26,10 +26,12 @@ public class ProductResource {
 
     private final ProductService service;
     private final ChangePublisher publisher;
+    private final Faults faults;
 
-    public ProductResource(ProductService service, ChangePublisher publisher) {
+    public ProductResource(ProductService service, ChangePublisher publisher, Faults faults) {
         this.service = service;
         this.publisher = publisher;
+        this.faults = faults;
     }
 
     @GET
@@ -37,12 +39,14 @@ public class ProductResource {
             @QueryParam("category") String category,
             @QueryParam("page") @DefaultValue("0") @Min(0) int page,
             @QueryParam("size") @DefaultValue("20") @Min(1) @Max(100) int size) {
+        faults.beforeRead();
         return service.list(category, page, size);
     }
 
     @GET
     @Path("/{id}")
     public Response get(@PathParam("id") long id) {
+        faults.beforeRead();
         return service.get(id)
                 .map(p -> Response.ok(p).build())
                 .orElseGet(ProductResource::notFound);

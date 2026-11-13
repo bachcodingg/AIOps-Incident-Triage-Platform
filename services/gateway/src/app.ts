@@ -101,11 +101,21 @@ export async function buildApp({
   app.get("/healthz", { config: { rateLimit: false } }, async () => ({ status: "ok" }));
   app.get("/readyz", { config: { rateLimit: false } }, async () => ({ status: "ready" }));
 
-  // A deliberately bad release (F02) turns this on with FAULT_ERROR_RATE.
+  // Deliberately bad releases (chaos/catalog.yaml). They fail the way a real bug
+  // does, a slow code path or an unhandled exception that Fastify logs with its
+  // stack and answers with a plain 500, so nothing in a response or a log line
+  // says the fault was injected.
+  if (config.faultLatencyMs > 0) {
+    app.addHook("preHandler", async (req) => {
+      if (req.routeOptions.url?.startsWith("/api/")) {
+        await new Promise((resolve) => setTimeout(resolve, config.faultLatencyMs));
+      }
+    });
+  }
   if (config.faultErrorRate > 0) {
-    app.addHook("preHandler", async (req, reply) => {
+    app.addHook("preHandler", async (req) => {
       if (req.routeOptions.url?.startsWith("/api/") && random() < config.faultErrorRate) {
-        return reply.code(500).send({ error: "injected_fault" });
+        throw new TypeError("Cannot read properties of undefined (reading 'locale')");
       }
     });
   }

@@ -25,16 +25,22 @@ extraEnv:
     valueFrom:
       secretKeyRef: {name: postgres-app, key: password}
 
+# The first start also runs the migrations, including the 2M-review seed.
 startupProbe:
   httpGet: {path: /q/health/started, port: http}
   periodSeconds: 3
-  failureThreshold: 40
+  failureThreshold: 80
 readinessProbe:
   httpGet: {path: /q/health/ready, port: http}
   periodSeconds: 5
 livenessProbe:
   httpGet: {path: /q/health/live, port: http}
   periodSeconds: 10
+
+# The stateless services may run on kind's tainted worker node, the target of
+# fault F14 (infra/kind/cluster.yaml). Harmless where no node has the taint.
+tolerations:
+  - {key: incidentlens.dev/pool, operator: Equal, value: workload, effect: NoSchedule}
 
 resources:
   requests: {cpu: 100m, memory: 256Mi}

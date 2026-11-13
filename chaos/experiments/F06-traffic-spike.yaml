@@ -1,0 +1,77 @@
+# F06 traffic spike: k6 pods in the `chaos` namespace add ${rate_per_minute}
+# requests a minute each on top of the normal load, the same mix of searches
+# and product lookups a shopper makes. The runner sizes ${pods} so that each pod
+# stays under the gateway's per-client rate limit: a flash crowd is many
+# clients, not one, and one client would only collect 429s.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+data:
+  script.js: |
+    import http from "k6/http";
+    export const options = {
+      discardResponseBodies: true,
+      noConnectionReuse: true,
+      scenarios: {
+        spike: {
+          executor: "constant-arrival-rate",
+          rate: ${rate_per_minute},
+          timeUnit: "1m",
+          duration: "${duration}",
+          preAllocatedVUs: 20,
+          maxVUs: 100,
+        },
+      },
+    };
+    const queries = ["laptop", "gaming laptop", "wireless mouse", "phone", "usb c cable", "monitor 27", "headphones"];
+    const gateway = "http://gateway.shopsearch.svc:8080";
+    export default function () {
+      if (Math.random() < 0.7) {
+        const q = queries[Math.floor(Math.random() * queries.length)];
+        http.get(gateway + "/api/search?q=" + encodeURIComponent(q));
+      } else {
+        http.get(gateway + "/api/products/" + (1 + Math.floor(Math.random() * 40)));
+      }
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  parallelism: ${pods}
+  completions: ${pods}
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: {app.kubernetes.io/managed-by: chaos-runner}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 12345 # the `k6` user of the image
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: k6
+          image: grafana/k6:2.3.0
+          args: ["run", "--quiet", "--summary-mode=disabled", "--no-thresholds", "/scripts/script.js"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 300m, memory: 192Mi}
+          volumeMounts:
+            - {name: script, mountPath: /scripts}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: script
+          configMap: {name: ${name}}
+        - name: tmp
+          emptyDir: {}

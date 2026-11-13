@@ -1,0 +1,29 @@
+# F07 network latency on the link ${source} -> ${destination}.
+#
+# The source reaches the destination through a Service. kube-proxy rewrites the
+# ClusterIP outside the source pod, so a tc filter inside the source never sees
+# a destination pod IP. The replies, though, leave the destination addressed to
+# the source pod's own IP, so the delay is put on the destination's egress to
+# the source: every round trip on the link is slower, nothing else is.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [${destination_namespace}]
+    labelSelectors: ${destination_labels}
+  direction: to
+  target:
+    mode: all
+    selector:
+      namespaces: [${source_namespace}]
+      labelSelectors: ${source_labels}
+  delay:
+    latency: ${intensity}
+    jitter: 10ms
+    correlation: "25"
+  duration: ${duration}

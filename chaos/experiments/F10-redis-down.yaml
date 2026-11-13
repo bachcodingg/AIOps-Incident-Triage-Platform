@@ -1,0 +1,14 @@
+# F10 Redis down: the Redis container is held on a pause image for the whole
+# duration, so restarts do not bring it back (pod-kill would, within seconds).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  action: pod-failure
+  mode: all
+  selector:
+    namespaces: [${target_namespace}]
+    labelSelectors: ${target_labels}
+  duration: ${duration}

@@ -1,0 +1,19 @@
+# F05 CPU saturation: stress-ng workers inside every pod of the target, in the
+# target container's own cgroup, so they compete with the service for its CPU
+# limit and the service gets throttled.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: ${name}
+  labels: {app.kubernetes.io/managed-by: chaos-runner}
+spec:
+  mode: all
+  selector:
+    namespaces: [${target_namespace}]
+    labelSelectors: ${target_labels}
+  containerNames: [${target}]
+  stressors:
+    cpu:
+      workers: ${intensity}
+      load: 100
+  duration: ${duration}

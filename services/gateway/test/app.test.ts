@@ -153,9 +153,32 @@ describe("FAULT_ERROR_RATE", () => {
     });
 
     expect((await app.inject("/healthz")).statusCode).toBe(200);
-    expect((await app.inject("/api/search?q=tv")).statusCode).toBe(500);
+    const failed = await app.inject("/api/search?q=tv");
+    expect(failed.statusCode).toBe(500);
+    expect(failed.body).not.toMatch(/fault|inject/i); // looks like any other bug
     expect((await app.inject("/api/search?q=tv")).statusCode).toBe(200);
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FAULT_LATENCY_MS", () => {
+  it("is off by default and rejects negative values", () => {
+    expect(config.faultLatencyMs).toBe(0);
+    expect(() => loadConfig({ FAULT_LATENCY_MS: "-5" })).toThrow(/FAULT_LATENCY_MS/);
+    expect(() => loadConfig({ FAULT_LATENCY_MS: "2s" })).toThrow(/FAULT_LATENCY_MS/);
+  });
+
+  it("slows API requests down, but not probes", async () => {
+    const fetchFn = vi.fn<FetchFn>().mockImplementation(async () => jsonResponse({ results: [] }));
+    app = await buildApp({ config: { ...config, faultLatencyMs: 120 }, fetchFn, logger: false });
+
+    let start = performance.now();
+    expect((await app.inject("/healthz")).statusCode).toBe(200);
+    expect(performance.now() - start).toBeLessThan(100);
+
+    start = performance.now();
+    expect((await app.inject("/api/search?q=tv")).statusCode).toBe(200);
+    expect(performance.now() - start).toBeGreaterThanOrEqual(115);
   });
 });
 
