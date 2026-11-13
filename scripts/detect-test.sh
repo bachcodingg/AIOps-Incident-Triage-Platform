@@ -70,14 +70,21 @@ denied create pods --subresource=exec -n shopsearch
 denied patch rollouts.argoproj.io -n shopsearch
 denied delete pods -n shopsearch
 denied get services/http:kube-prometheus-stack-grafana:80 --subresource=proxy -n monitoring
-reach() { k --as="$AS" get --raw "/api/v1/namespaces/monitoring/services/http:$1" >/dev/null 2>&1; }
-for backend in "kube-prometheus-stack-prometheus:9090/api/v1/query?query=up" "loki:3100/loki/api/v1/labels" "tempo:3200/api/echo"; do
-  retry "it reaches ${backend%%/*} through the service proxy" reach "$backend"
+# reach <service:port> <path>: a GET through the service proxy, as the aiops account.
+reach() { k --as="$AS" get --raw "/api/v1/namespaces/monitoring/services/http:$1/proxy$2" >/dev/null 2>"$work/reach.err"; }
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+for backend in "kube-prometheus-stack-prometheus:9090 /api/v1/query?query=up" "loki:3100 /loki/api/v1/labels" "tempo:3200 /api/echo"; do
+  set -- $backend
+  deadline=$((SECONDS + 60))
+  until reach "$1" "$2"; do
+    ((SECONDS < deadline)) || { sed 's/^/    /' "$work/reach.err"; fail "it reaches $1 through the service proxy"; }
+    sleep 5
+  done
+  pass "it reaches $1 through the service proxy"
 done
 
 echo "recorder"
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
 py -m recorder record --context "$CONTEXT" --kubectl "$KUBECTL" --out "$work/rec" --from now-11m --to now-6m >/dev/null
 py - "$work/rec" <<'PY' || fail "a recorded chunk has every section"
 import sys
