@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/bachcodingg/incidentlens/indexer
-  tag: unreleased # release.yml opens the pull request that updates tag and digest
-  digest: ""
+  tag: sha-e18e92f1e18723dca03a7e3a2f01c6df22016f81
+  digest: "sha256:232ac5b22593d1f2876b638d116ca431520dfa22e1acb871a05b1422f468ac5d"
   pullPolicy: IfNotPresent
 
 runAsUser: 10001
