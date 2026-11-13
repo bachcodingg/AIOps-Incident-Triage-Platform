@@ -219,6 +219,79 @@ chaos-run: tools $(CHAOS_PY) ## Dataset run: every fault 5 times at random, abou
 chaos-cleanup: tools $(CHAOS_PY) ## Undo whatever an interrupted chaos run left behind
 	$(CHAOS) cleanup
 
+# --- detection and the dataset (aiops/README.md, eval/README.md) ----------------
+# Recordings, models and labels live under ~/.incidentlens, never in this
+# repository. Only the seals (eval/seals) and the dataset lock (eval/dataset)
+# are committed. The recorder reads the cluster as the aiops service account.
+AIOPS_VENV := .bin/aiops-venv
+ifeq ($(OS),windows)
+  AIOPS_PY := $(AIOPS_VENV)/Scripts/python.exe
+  PATHSEP := ;
+else
+  AIOPS_PY := $(AIOPS_VENV)/bin/python
+  PATHSEP := :
+endif
+AIOPS = PYTHONPATH="aiops$(PATHSEP)chaos/runner$(PATHSEP)eval" $(AIOPS_PY) -m
+AIOPS_KUBE = --context kind-$(CLUSTER) --kubectl $(KUBECTL)
+
+$(AIOPS_PY): aiops/requirements.txt aiops/requirements-dev.txt chaos/runner/requirements.txt
+	$(PYTHON) -m venv $(AIOPS_VENV)
+	$(AIOPS_PY) -m pip install -q -r aiops/requirements-dev.txt -r chaos/runner/requirements.txt
+	@touch $@
+
+.PHONY: aiops-unit
+aiops-unit: $(AIOPS_PY) ## Unit test the recorder, detectors, correlator and dataset freeze (no cluster)
+	cd aiops && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
+	cd eval && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
+
+.PHONY: record
+record: tools $(AIOPS_PY) ## Record telemetry as the aiops account: make record NAME=baseline [HOURS=72]
+	@test -n "$(NAME)" || { echo "usage: make record NAME=baseline [HOURS=72] [FROM=now-1h]"; exit 1; }
+	$(AIOPS) recorder record $(AIOPS_KUBE) --name '$(NAME)' $(if $(HOURS),--hours $(HOURS)) $(if $(FROM),--from '$(FROM)')
+
+# The recorder starts an hour and five minutes back (detection needs that much
+# history before the first fault), runs while chaos-runner works through the
+# catalog, and stops 25 minutes after the last recovery.
+.PHONY: dataset-run
+dataset-run: tools $(AIOPS_PY) $(CHAOS_PY) ## Record the dataset: chaos-run with the recorder alongside, about 70 h
+	@name=dataset-$$(date -u +%Y%m%dT%H%M%SZ); mkdir -p .bin; \
+	$(AIOPS) recorder record $(AIOPS_KUBE) --name "$$name" --from now-65m > ".bin/$$name.log" 2>&1 & rec=$$!; \
+	trap 'kill $$rec 2>/dev/null || true' EXIT; \
+	echo "recording $$name alongside the run (log: .bin/$$name.log)"; \
+	$(MAKE) --no-print-directory chaos-run; \
+	echo "run over; recording 25 more minutes of recovery"; sleep 1500; \
+	echo "done. Next: make dataset-freeze RUN=<run id above> RECORDING=$$name MODEL=<baseline model>"
+
+.PHONY: detector-train
+detector-train: $(AIOPS_PY) ## Fit the Isolation Forests on a fault-free recording: make detector-train RECORDING=baseline
+	@test -n "$(RECORDING)" || { echo "usage: make detector-train RECORDING=<fault-free recording>"; exit 1; }
+	$(AIOPS) detector train --recording '$(RECORDING)'
+
+.PHONY: detect
+detect: $(AIOPS_PY) ## Alerts and B0/B1/B2 incidents for a recording: make detect RECORDING=... [MODEL=baseline]
+	@test -n "$(RECORDING)" || { echo "usage: make detect RECORDING=<name> [MODEL=<model name>]"; exit 1; }
+	$(AIOPS) detector run --recording '$(RECORDING)' $(if $(MODEL),--model '$(MODEL)')
+	@for v in B0 B1 B2; do $(AIOPS) correlator --recording '$(RECORDING)' --variant $$v; done
+
+.PHONY: detect-score
+detect-score: $(AIOPS_PY) ## Detection metrics on the tuning set: make detect-score RUN=run-... RECORDING=...
+	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make detect-score RUN=<run id> RECORDING=<name>"; exit 1; }
+	$(AIOPS) harness score --run '$(RUN)' --recording '$(RECORDING)'
+
+.PHONY: dataset-freeze
+dataset-freeze: $(AIOPS_PY) ## Gate G2: split tuning/test, hash-lock the test set: make dataset-freeze RUN=... RECORDING=... MODEL=...
+	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make dataset-freeze RUN=<run id> RECORDING=<name> [MODEL=<name>]"; exit 1; }
+	$(AIOPS) harness freeze --run '$(RUN)' --recording '$(RECORDING)' $(if $(MODEL),--model '$(MODEL)')
+
+.PHONY: dataset-verify
+dataset-verify: $(AIOPS_PY) ## Check labels, recording and split against the committed lock
+	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make dataset-verify RUN=<run id> RECORDING=<name> [MODEL=<name>]"; exit 1; }
+	$(AIOPS) harness verify --run '$(RUN)' --recording '$(RECORDING)' $(if $(MODEL),--model '$(MODEL)')
+
+.PHONY: detect-test
+detect-test: tools $(AIOPS_PY) ## Detection layer on a running cluster: rules, the aiops account's reach, a recorded chunk
+	CONTEXT="kind-$(CLUSTER)" KUBECTL=$(KUBECTL) AIOPS_PY="$(AIOPS_PY)" PATHSEP="$(PATHSEP)" scripts/detect-test.sh
+
 .PHONY: status
 status: tools ## Show ArgoCD applications, rollouts and pods
 	$(KUBECTL) --context kind-$(CLUSTER) -n argocd get applications
@@ -237,7 +310,8 @@ CHARTS := gateway search-api catalog indexer redis postgres loadgen
 
 .PHONY: gitops-lint
 gitops-lint: tools ## Lint and schema-check the charts, and unit test the policies
-	KUBECONFORM="$${KUBECONFORM:-kubeconform}" KYVERNO="$${KYVERNO:-kyverno}" HELM=$(HELM) CHARTS="$(CHARTS)" scripts/gitops-lint.sh
+	KUBECONFORM="$${KUBECONFORM:-kubeconform}" KYVERNO="$${KYVERNO:-kyverno}" PROMTOOL="$${PROMTOOL:-promtool}" \
+	  HELM=$(HELM) CHARTS="$(CHARTS)" scripts/gitops-lint.sh
 
 # --- Terraform checks, no cloud account needed ----------------------------------
 TF_MODULES := $(wildcard infra/modules/aws/*) $(wildcard infra/modules/oci/*) infra/modules/kind

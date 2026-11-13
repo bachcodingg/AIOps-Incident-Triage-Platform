@@ -38,12 +38,14 @@ jobs:
     env:
       KUBECONFORM_VERSION: v0.8.0
       KYVERNO_VERSION: v1.19.2
+      PROMETHEUS_VERSION: 3.15.1
     steps:
       - uses: actions/checkout@v7
-      - name: Install kubeconform and kyverno
+      - name: Install kubeconform, kyverno and promtool
         run: |
           curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz -C /usr/local/bin kubeconform
           curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin kyverno
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"             | tar -xz -C /usr/local/bin --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
       - run: make gitops-lint
 
   # The fault catalog is validated (every template renders for every target and
@@ -57,8 +59,19 @@ jobs:
         with: {python-version: "3.12"}
       - run: make chaos-unit
 
+  # Recorder, detectors, correlator and the dataset freeze, against synthetic
+  # recordings and fake labels: no cluster.
+  aiops-unit:
+    name: detectors, correlator and dataset freeze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: make aiops-unit
+
   e2e:
-    name: e2e on kind (make up, canary, policies, observability)
+    name: e2e on kind (make up, canary, policies, observability, detection)
     needs: [unit, gitops-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -67,6 +80,8 @@ jobs:
       REVISION: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7 # for the recorder and detectors in make detect-test
+        with: {python-version: "3.12"}
       # A fresh clone must come up end to end with one command (week 1 "done when").
       - name: make up
         run: make up
@@ -77,6 +92,11 @@ jobs:
       # with its logs and metrics, and the SLOs and dashboards are in place (week 4).
       - name: make obs-test
         run: make obs-test
+      # Week 6: the static and burn-rate rules are loaded, the aiops account can
+      # read what triage needs and cannot see the chaos namespace, and a chunk
+      # recorded as that account goes through the detectors and the correlator.
+      - name: make detect-test
+        run: make detect-test
       - name: Diagnostics
         if: failure()
         run: |
@@ -89,4 +109,6 @@ jobs:
           kubectl --context kind-incidentlens -n monitoring get events --sort-by=.lastTimestamp | tail -30 || true
           kubectl --context kind-incidentlens -n monitoring logs --prefix --tail=60 -l app.kubernetes.io/name=opentelemetry-collector || true
           kubectl --context kind-incidentlens -n monitoring logs --tail=40 deploy/sloth || true
+          kubectl --context kind-incidentlens get prometheusrules -A || true
+          kubectl --context kind-incidentlens -n argocd get application aiops -o jsonpath='{.status.conditions}' || true
           kubectl --context kind-incidentlens top pods -A --sort-by=memory | head -30 || true
