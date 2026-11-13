@@ -1,0 +1,13 @@
+[project]
+name = "incidentlens-aiops"
+version = "0.1.0"
+description = "The AIOps loop: telemetry recorder, detectors and correlator (week 6); agent and remediator later."
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.2", "scikit-learn>=1.6", "PyYAML>=6"]
+
+[tool.setuptools]
+packages = ["recorder", "detector", "correlator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
