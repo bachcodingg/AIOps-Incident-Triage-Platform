@@ -1,0 +1,26 @@
+# The `aiops` service account is the only identity the AIOps layer uses: the
+# telemetry recorder (week 6) impersonates it, the triage agent's tools (week 8)
+# and the remediator (week 9, its own narrow write role) run as it.
+#
+# Read access is granted namespace by namespace, through RoleBindings, never a
+# ClusterRoleBinding. The `chaos` and `chaos-mesh` namespaces, and Chaos Mesh's
+# resources everywhere, are therefore out of reach by construction: that is half
+# of what keeps the ground truth sealed (chaos/README.md#sealed-ground-truth).
+serviceAccount: aiops
+
+# Where the workload runs, and what the agent may see there.
+workloadNamespace: shopsearch
+# CoreDNS lives here (fault F09), so pods, deployments and events are readable.
+systemNamespace: kube-system
+
+# Telemetry backends, reachable only through the API server's service proxy.
+# Each is listed twice: the name RBAC sees for /services/http:<name>:<port>/proxy
+# and the plain name for the default port.
+monitoringNamespace: monitoring
+proxies:
+  - {name: kube-prometheus-stack-prometheus, port: 9090}
+  - {name: loki, port: 3100}
+  - {name: tempo, port: 3200}
+
+# Deploy history (ArgoCD Applications) for the agent's argocd_history tool.
+argocdNamespace: argocd

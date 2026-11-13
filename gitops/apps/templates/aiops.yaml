@@ -1,0 +1,32 @@
+# The AIOps layer's service account and its read-only RBAC (gitops/aiops).
+# Last, because its RoleBindings go into the workload namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aiops
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aiops
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.revision }}
+    path: gitops/aiops
+    helm:
+      valuesObject:
+        workloadNamespace: {{ .Values.workloadNamespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: {duration: 10s, factor: 2, maxDuration: 3m}
