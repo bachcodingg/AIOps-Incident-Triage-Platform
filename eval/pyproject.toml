@@ -1,0 +1,10 @@
+[project]
+name = "incidentlens-eval"
+version = "0.1.0"
+description = "Evaluation harness: dataset freeze (gate G2), detection scores; triage scores in week 10."
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The harness reads labels (chaos-runner) and runs the AIOps code on recordings.
+pythonpath = [".", "../aiops", "../chaos/runner"]
