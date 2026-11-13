@@ -1,0 +1,116 @@
+# Detector (a), baseline B0: static thresholds, the alerts many teams start
+# with. They watch causes (CPU, memory, restarts, a fixed error rate), where the
+# SLO burn-rate alerts (detector b, files/slos.yaml) watch what users feel.
+# Both run side by side so the evaluation can compare them (docs/design.md
+# section 6). Thresholds are the textbook ones on purpose, not tuned to the
+# fault catalog: B0 is what you get without SLOs or anomaly detection.
+#
+# Every alert carries `detector: static` and the `component` the correlator
+# groups by. Severity `baseline` is routed nowhere (gitops/observability
+# templates/alerting.yaml only forwards page and ticket), so B0 never pages.
+#
+# A plain Prometheus rules file, so `promtool test rules` can run against it
+# (tests/static-rules.test.yaml, in `make gitops-lint`). templates/static-rules.yaml
+# wraps it in a PrometheusRule.
+groups:
+  - name: incidentlens-static
+    rules:
+      - alert: StaticHighErrorRate
+        expr: |
+          label_replace(
+            sum by (job) (rate(http_server_request_duration_seconds_count{job=~"shopsearch/.+",http_response_status_code=~"5.."}[5m]))
+              / sum by (job) (rate(http_server_request_duration_seconds_count{job=~"shopsearch/.+"}[5m])),
+            "component", "$1", "job", "shopsearch/(.+)"
+          ) > 0.05
+        for: 2m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "{{ $labels.component }} answers {{ $value | humanizePercentage }} of requests with a 5xx (threshold 5%)."
+
+      - alert: StaticHighLatency
+        expr: |
+          label_replace(
+            histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~"shopsearch/.+"}[5m]))),
+            "component", "$1", "job", "shopsearch/(.+)"
+          ) > 0.3
+        for: 5m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "{{ $labels.component }} p95 latency is {{ $value | humanizeDuration }} (threshold 300 ms)."
+
+      - alert: StaticHighCPU
+        expr: |
+          label_replace(
+            max by (container) (
+              sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"}[5m]))
+                / sum by (pod, container) (kube_pod_container_resource_limits{namespace="shopsearch",resource="cpu"})
+            ),
+            "component", "$1", "container", "(.+)"
+          ) > 0.8
+        for: 5m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "A {{ $labels.component }} pod uses {{ $value | humanizePercentage }} of its CPU limit (threshold 80%)."
+
+      - alert: StaticHighMemory
+        expr: |
+          label_replace(
+            max by (container) (
+              max by (pod, container) (container_memory_working_set_bytes{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+                / max by (pod, container) (kube_pod_container_resource_limits{namespace="shopsearch",resource="memory"})
+            ),
+            "component", "$1", "container", "(.+)"
+          ) > 0.9
+        for: 5m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "A {{ $labels.component }} pod uses {{ $value | humanizePercentage }} of its memory limit (threshold 90%)."
+
+      - alert: StaticPodRestarts
+        expr: |
+          label_replace(
+            sum by (container) (increase(kube_pod_container_status_restarts_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"}[15m])),
+            "component", "$1", "container", "(.+)"
+          ) > 2
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "{{ $labels.component }} restarted more than twice in 15 minutes."
+
+      - alert: StaticPodNotReady
+        expr: |
+          label_replace(
+            count by (container) (kube_pod_container_status_ready{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"} == 0),
+            "component", "$1", "container", "(.+)"
+          ) > 0
+        for: 5m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "{{ $value }} {{ $labels.component }} container(s) not ready for 5 minutes."
+
+      - alert: StaticNodeNotReady
+        expr: label_replace(kube_node_status_condition{condition="Ready",status="true"} == 0, "component", "node", "", "")
+        for: 2m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "Node {{ $labels.node }} is not Ready."
+
+      - alert: StaticDeploymentUnavailable
+        expr: label_replace(kube_deployment_status_replicas_available{namespace="kube-system"} == 0, "component", "cluster", "", "")
+        for: 1m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "kube-system deployment {{ $labels.deployment }} has no available replica."
+
+      # Needs volume stats from the kubelet: EBS reports them, kind's host-path
+      # volumes do not, so on kind this rule cannot see F13. That is a real
+      # limit of B0 there, and it is reported as such.
+      - alert: StaticVolumeFilling
+        expr: |
+          label_replace(
+            kubelet_volume_stats_used_bytes{namespace="shopsearch"} / kubelet_volume_stats_capacity_bytes{namespace="shopsearch"},
+            "component", "$1", "persistentvolumeclaim", "([a-z]+)-.*"
+          ) > 0.8
+        for: 5m
+        labels: {detector: static, severity: baseline}
+        annotations:
+          summary: "Volume {{ $labels.persistentvolumeclaim }} is {{ $value | humanizePercentage }} full (threshold 80%)."

@@ -1,0 +1,44 @@
+# Detector (c), anomaly detection: every tunable number in one place.
+#
+# Tune these on the tuning set only (docs/design.md section 6). Their history
+# in Git is the record of what was tuned and when; after gate G3 they do not
+# change again.
+
+# Rolling median and MAD, per RED metric of each service. A point's score is
+# (value - median of the last `window`) / (1.4826 * MAD), with the MAD held
+# above a floor so a very steady metric does not alert on noise.
+mad:
+  window_minutes: 60
+  min_points: 60          # 15 minutes of history before scoring
+  threshold: 6            # robust z-score
+  for_seconds: 60         # above the threshold this long before it fires (like Prometheus `for`)
+  clear_seconds: 120      # below it this long before it resolves
+  metrics:
+    # direction: up (only rises are anomalies), down, or both
+    # floor: the MAD is at least relative * |median| + absolute
+    requests:    {direction: both, relative: 0.05, absolute: 0.1}    # requests per second
+    error_ratio: {direction: up,   relative: 0.0,  absolute: 0.004}  # share of 5xx
+    latency_p95: {direction: up,   relative: 0.1,  absolute: 0.005}  # seconds
+    changes:     {direction: both, relative: 0.2,  absolute: 0.05}   # indexer events per second
+
+# Isolation Forest per component, on all its metrics at once (RED plus CPU,
+# memory, readiness and restarts). Trained on fault-free traffic only.
+iforest:
+  trees: 200
+  max_samples: 512
+  # The threshold is this quantile of the training scores: on fault-free data,
+  # 0.1% of points score above it.
+  quantile: 0.999
+  # A forest cannot isolate values beyond the range it was trained on, so a
+  # point outside the training envelope (0.1th to 99.9th percentile, widened
+  # by this many interquartile ranges) counts as anomalous on its own.
+  range_margin_iqr: 3
+  for_seconds: 60
+  clear_seconds: 120
+
+# A component whose metrics stop arriving: a crashed service has no metrics
+# at all, which neither score above can see.
+absent:
+  for_seconds: 120
+  history_minutes: 30
+  min_presence: 0.8       # it must have reported at least this share of the history

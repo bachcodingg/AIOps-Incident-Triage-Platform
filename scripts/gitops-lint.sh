@@ -5,6 +5,7 @@ set -euo pipefail
 HELM="${HELM:-helm}"
 KUBECONFORM="${KUBECONFORM:-kubeconform}"
 KYVERNO="${KYVERNO:-kyverno}"
+PROMTOOL="${PROMTOOL:-promtool}"
 CHARTS="${CHARTS:-gateway search-api catalog indexer redis postgres loadgen}"
 
 cd "$(dirname "$0")/.."
@@ -35,6 +36,16 @@ uids = [json.load(open(p))["uid"] for p in sys.argv[1:]]
 assert len(uids) == len(set(uids)), f"duplicate dashboard uid in {uids}"
 print(f"{len(uids)} dashboards: {', '.join(uids)}")
 PY
+
+# Detector (a), the static thresholds: valid rules, and unit tests that they
+# fire where they should and stay quiet where they should not.
+echo "==> alert rules"
+"$PROMTOOL" check rules gitops/observability/files/static-rules.yaml
+"$PROMTOOL" test rules gitops/observability/tests/*.test.yaml
+
+echo "==> aiops"
+"$HELM" lint --quiet gitops/aiops
+"$HELM" template aiops gitops/aiops --namespace aiops | conform
 
 echo "==> policies"
 "$HELM" lint --quiet gitops/policies

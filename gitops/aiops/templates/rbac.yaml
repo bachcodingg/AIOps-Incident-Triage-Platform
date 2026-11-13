@@ -1,0 +1,120 @@
+{{- $sa := .Values.serviceAccount -}}
+{{- $ns := .Release.Namespace -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $ns }}
+automountServiceAccountToken: false
+---
+# What an on-call engineer looks at in a namespace, and nothing that holds data
+# or secrets: no secrets, configmaps, pods/log, pods/exec, and no write verb.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-read
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints, events, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [rollouts, analysisruns, analysistemplates]
+    verbs: [get, list, watch]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch]
+{{- range list .Values.workloadNamespace .Values.systemNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-read
+  namespace: {{ . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aiops-read
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+{{- end }}
+---
+# Nodes are cluster-scoped: node loss (F14) has to be visible.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-nodes
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aiops-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aiops-nodes
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+---
+# Prometheus, Loki and Tempo through the service proxy, by name: not Grafana,
+# not Alertmanager, not kube-state-metrics.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aiops-telemetry
+  namespace: {{ .Values.monitoringNamespace }}
+rules:
+  - apiGroups: [""]
+    resources: [services/proxy]
+    verbs: [get]
+    resourceNames:
+      {{- range .Values.proxies }}
+      - {{ printf "http:%s:%v" .name .port | quote }}
+      - {{ .name | quote }}
+      {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-telemetry
+  namespace: {{ .Values.monitoringNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aiops-telemetry
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aiops-deploys
+  namespace: {{ .Values.argocdNamespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-deploys
+  namespace: {{ .Values.argocdNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aiops-deploys
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aiops
+description: The AIOps layer's identity in the cluster, read-only and blind to the chaos namespace.
+type: application
+version: 0.1.0

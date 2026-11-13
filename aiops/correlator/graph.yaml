@@ -1,0 +1,21 @@
+# The static service graph: who calls whom in ShopSearch, from the
+# architecture (README.md, docs/design.md section 3). The correlator joins it
+# with the graph Tempo derives from live traces (traces_service_graph_request_total,
+# recorded as graph_requests): the static graph is always there, Tempo adds
+# whatever the traces show that this file forgot.
+edges:
+  - [gateway, search-api]
+  - [gateway, catalog]
+  - [search-api, redis]
+  - [catalog, postgres]
+  - [catalog, redis]      # LPUSH to catalog:changes
+  - [indexer, redis]      # BRPOP, search:docs
+  - [indexer, catalog]    # full reindex
+
+# A fault here can explain an alert on any component.
+infrastructure: [node, cluster, unknown]
+
+# Tempo names a database peer after db.system or db.name; map those to components.
+aliases:
+  postgresql: postgres
+  redis: redis

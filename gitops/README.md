@@ -8,8 +8,9 @@ installs ArgoCD and one root Application, nothing is applied by hand.
 | [`bootstrap/`](bootstrap/) | ArgoCD values: the one install that cannot come from ArgoCD |
 | [`apps/`](apps/) | app-of-apps chart, plus `values-{kind,aws,oci}.yaml` per environment |
 | [`charts/`](charts/) | one Helm chart per service, built on the shared `service-lib` library chart |
-| [`observability/`](observability/) | SLOs (Sloth), alert routing and the Grafana dashboards |
+| [`observability/`](observability/) | SLOs (Sloth), static-threshold rules, alert routing and the Grafana dashboards |
 | [`policies/`](policies/) | Kyverno admission policies and their tests |
+| [`aiops/`](aiops/) | the `aiops` service account: read-only, and blind to the chaos namespace |
 
 ## From commit to production
 
@@ -51,7 +52,7 @@ adds it back.
 | 0 | redis, postgres | services need them |
 | 1 | catalog | owns the schema |
 | 2 | search-api, indexer, gateway | depend on catalog |
-| 3 | loadgen | canary analysis needs traffic |
+| 3 | loadgen, aiops | canary analysis needs traffic; the aiops RoleBindings go into the workload namespace |
 
 ## Canary analysis
 
@@ -176,7 +177,26 @@ make alert-webhook URL=https://discord.com/api/webhooks/...
 Without a webhook the route is rejected and alerts stay visible in Alertmanager
 and on the **ShopSearch / SLOs** dashboard. kube-prometheus-stack's own
 platform alerts (crash loops, full volumes, and so on) go to the default `null`
-receiver; the threshold detector of week 6 is a separate baseline.
+receiver.
+
+The static thresholds of baseline B0 (error rate above 5%, CPU above 80% of the
+limit, restarts, unready pods, and so on) are separate rules in
+[`observability/files/static-rules.yaml`](observability/files/static-rules.yaml),
+unit tested with `promtool test rules` in `make gitops-lint`. They carry
+`severity: baseline` and are routed nowhere: they exist to be compared with the
+burn-rate alerts, not to page anyone. Every rule of either kind carries a
+`detector` label (`static` or `burn-rate`) and a component, which is how the
+correlator ([aiops/](../aiops/)) reads them back.
+
+### The aiops service account
+
+[`aiops/`](aiops/) creates the identity the AIOps layer uses. Its read access is
+granted per namespace with RoleBindings (shopsearch, kube-system), plus nodes,
+ArgoCD Applications, and Prometheus, Loki and Tempo through the service proxy
+by name. There is no ClusterRoleBinding to a read role, so the `chaos` and
+`chaos-mesh` namespaces and every Chaos Mesh resource are out of reach by
+construction; secrets, pod logs, exec and every write verb are too. `make
+detect-test` (in CI) checks each of these with `kubectl auth can-i`.
 
 ### Dashboards
 

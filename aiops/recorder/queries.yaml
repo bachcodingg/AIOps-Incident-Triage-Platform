@@ -1,0 +1,69 @@
+# The telemetry the recorder exports for every chunk. A fixed list on purpose:
+# each query is scoped to the workload (namespace shopsearch, the services'
+# jobs, nodes, CoreDNS), so no series about the chaos namespace, its k6 pods or
+# Chaos Mesh objects can end up in the dataset.
+#
+# Changing this file changes what the detectors and the agent can see. Its hash
+# is written into every recording, and into the dataset lock at gate G2.
+
+step_seconds: 15
+
+metrics:
+  # RED per service, as each service measures itself.
+  requests: sum by (job) (rate(http_server_request_duration_seconds_count{job=~"shopsearch/.+"}[1m]))
+  errors: sum by (job) (rate(http_server_request_duration_seconds_count{job=~"shopsearch/.+",http_response_status_code=~"5.."}[1m]))
+  latency_p95: histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~"shopsearch/.+"}[1m])))
+  latency_p50: histogram_quantile(0.50, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~"shopsearch/.+"}[1m])))
+
+  # The gateway per route: where users feel it, and which call chain hurts.
+  route_requests: sum by (http_route) (rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route=~"/api/.+"}[1m]))
+  route_errors: sum by (http_route) (rate(http_server_request_duration_seconds_count{job="shopsearch/gateway",http_route=~"/api/.+",http_response_status_code=~"5.."}[1m]))
+  route_latency_p95: histogram_quantile(0.95, sum by (http_route, le) (rate(http_server_request_duration_seconds_bucket{job="shopsearch/gateway",http_route=~"/api/.+"}[1m])))
+
+  # Saturation per container, workload only.
+  cpu: sum by (container) (rate(container_cpu_usage_seconds_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"}[1m]))
+  cpu_limit: sum by (container) (kube_pod_container_resource_limits{namespace="shopsearch",resource="cpu",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+  cpu_throttled: |
+    sum by (container) (rate(container_cpu_cfs_throttled_periods_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"}[1m]))
+      / sum by (container) (rate(container_cpu_cfs_periods_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"}[1m]))
+  memory: max by (container) (container_memory_working_set_bytes{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+  memory_limit: max by (container) (kube_pod_container_resource_limits{namespace="shopsearch",resource="memory",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+
+  # Pods and nodes.
+  restarts: sum by (container) (kube_pod_container_status_restarts_total{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+  ready: sum by (container) (kube_pod_container_status_ready{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+  containers: count by (container) (kube_pod_container_status_ready{namespace="shopsearch",container=~"gateway|search-api|catalog|indexer|redis|postgres"})
+  nodes_ready: sum by (node) (kube_node_status_condition{condition="Ready",status="true"})
+  coredns_available: sum(kube_deployment_status_replicas_available{namespace="kube-system",deployment="coredns"})
+
+  # The worker and the data stores.
+  indexer_changes: sum by (outcome) (rate(indexer_changes_total{job="shopsearch/indexer"}[1m]))
+  indexer_ready: max(indexer_ready{job="shopsearch/indexer"})
+  db_size: sum(cnpg_pg_database_size_bytes{datname="catalog"})
+  db_backends: sum by (state) (cnpg_backends_total{datname="catalog"})
+
+  # Tempo's service graph: who calls whom, how often, how often it fails.
+  graph_requests: sum by (client, server) (rate(traces_service_graph_request_total[1m]))
+  graph_failed: sum by (client, server) (rate(traces_service_graph_request_failed_total[1m]))
+
+# Static (B0) and burn-rate (B1) alerts, as Prometheus evaluated them.
+alerts: ALERTS{alertstate="firing",detector=~"static|burn-rate"}
+
+# Log volume per service and level, and the warning and error lines themselves.
+logs:
+  volume: sum by (service_name, detected_level) (count_over_time({service_namespace="shopsearch"}[1m]))
+  lines: '{service_namespace="shopsearch"} | detected_level=~"(?i)warn|warning|error|fatal|critical"'
+  max_lines: 300
+
+# Slow and failed requests as summaries, plus a few full traces per chunk.
+traces:
+  searches:
+    errors: '{ status = error }'
+    slow: '{ kind = server && duration > 300ms }'
+  limit: 20
+  full_traces: 3
+
+# Kubernetes objects, read as the aiops service account.
+events_namespaces: [shopsearch, kube-system]
+rollouts_namespace: shopsearch
+argocd_namespace: argocd

@@ -14,8 +14,9 @@ injected incidents; the plan and targets are fixed in advance in
 
 | Variant | Detection recall | MTTD | RCA top-1 | Action accuracy | Cost / incident |
 |---|---|---|---|---|---|
-| B1 static thresholds | – | – | – | – | – |
-| B2 burn-rate + rule RCA | – | – | – | – | – |
+| B0 static thresholds | – | – | – | – | – |
+| B1 SLO burn-rate alerts | – | – | – | – | – |
+| B2 burn-rate + anomaly + rule RCA | – | – | – | – | – |
 | A1 burn-rate + anomaly + LLM agent | – | – | – | – | – |
 
 ## Architecture
@@ -52,13 +53,14 @@ curl 'http://localhost:8080/api/search?q=gaming%20lapotp'
 make canary-test # a good release is promoted, a bad one aborts on its own
 make obs-test    # a request followed from the gateway to its database span
 make chaos-test FAULT=F12   # break it on purpose: one fault, its symptom, recovery
+make detect-test # detectors and the read-only aiops account on the live cluster
 make grafana     # Grafana on http://localhost:3000 and its admin password
 make down        # delete the cluster
 ```
 
 `make up` deploys the same charts through ArgoCD as a cloud cluster does, so
-ArgoCD follows your current branch **on GitHub**: push before you run it. All
-three tests run in the [`e2e` CI job](.github/workflows/ci.yml) on every pull
+ArgoCD follows your current branch **on GitHub**: push before you run it. The
+canary, observability and detection tests run in the [`e2e` CI job](.github/workflows/ci.yml) on every pull
 request. If port 8080 or 3000 is taken, use `make up HOST_PORT=8088
 GRAFANA_PORT=3001` on a new cluster. With less than 8 GB for Docker, the CI job
 is the place to run the whole stack. Other targets: `make help`.
@@ -77,7 +79,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 | [`infra/`](infra/) | Terraform modules for AWS EKS and OCI, Terragrunt environments, kind |
 | [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies, SLOs and dashboards |
 | [`chaos/`](chaos/) | fault catalog (F01–F14), Chaos Mesh experiments, and `chaos-runner`, which injects them and seals the ground truth |
-| [`aiops/`](aiops/) | detectors, correlator, triage agent, remediator (weeks 6–9) |
+| [`aiops/`](aiops/) | telemetry recorder, detectors and correlator (week 6); triage agent and remediator follow (weeks 8–9) |
 | [`eval/`](eval/) | evaluation harness and results (weeks 6–10) |
 | [`docs/`](docs/) | design doc, [runbooks](docs/runbooks/) for every fault; postmortems later |
 
@@ -88,7 +90,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [x] **Week 3 — GitOps:** Helm charts, ArgoCD, signed images, Argo Rollouts canaries, Kyverno ([how a commit reaches production](gitops/README.md#from-commit-to-production))
 - [x] **Week 4 — Observability and SLOs (gate G1):** OpenTelemetry in all 4 services, collector agent and gateway, Prometheus, Loki, Tempo and Grafana through ArgoCD, Sloth SLOs with burn-rate alerts, RED, SLO and cost dashboards, a daily k6 load curve. `make obs-test` follows a request from the gateway to its database span ([how](gitops/README.md#following-a-request))
 - [x] **Week 5 — Chaos and runbooks:** the 14 faults as Chaos Mesh experiments, bad releases and load, `chaos-runner` with a seeded random schedule and hash-chained sealed labels, a runbook per fault, and a dry run in CI that proves each fault's symptom on its own cluster ([how faults are injected](chaos/README.md))
-- [ ] Week 6 — Detection, correlation, dataset recording (**gate G2**)
+- [ ] **Week 6 — Detection and correlation (gate G2):** static-threshold rules with promtool tests, burn-rate alerts labelled as a detector, anomaly detection (rolling MAD, Isolation Forest, missing telemetry), a correlator over the static and Tempo service graphs, a recorder that reads as a read-only account blind to the chaos namespace, and a freeze that hash-locks the test set. The code is done and tested; gate G2 waits for the recording itself, about 6 days of laptop time ([steps](docs/design.md#11-detection-and-correlation-week-6))
 - [ ] Week 8 — Triage agent
 - [ ] Week 9 — Remediation and console
 - [ ] Week 10 — Evaluation runs (**gate G3**)
