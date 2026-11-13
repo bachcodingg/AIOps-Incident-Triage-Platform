@@ -1,0 +1,13 @@
+{{- /*
+Detector (a), the static thresholds of baseline B0. The rules are in
+files/static-rules.yaml, a plain Prometheus rules file, so that promtool can
+unit test them and Helm does not try to render their {{ $labels }} templates.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: incidentlens-static
+  labels:
+    app.kubernetes.io/part-of: incidentlens
+spec:
+{{ .Files.Get "files/static-rules.yaml" | indent 2 }}

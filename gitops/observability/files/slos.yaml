@@ -30,6 +30,7 @@ spec:
         name: SearchAvailabilityBudgetBurn
         labels:
           category: availability
+          detector: burn-rate
         annotations:
           summary: Search is failing fast enough to burn its error budget.
           runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
@@ -53,6 +54,7 @@ spec:
         name: SearchLatencyBudgetBurn
         labels:
           category: latency
+          detector: burn-rate
         annotations:
           summary: Too many searches take longer than 300 ms.
           runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
@@ -72,6 +74,7 @@ spec:
         name: ProductsAvailabilityBudgetBurn
         labels:
           category: availability
+          detector: burn-rate
         annotations:
           summary: Product lookups are failing fast enough to burn their error budget.
           runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks
@@ -94,6 +97,7 @@ spec:
         name: ProductsLatencyBudgetBurn
         labels:
           category: latency
+          detector: burn-rate
         annotations:
           summary: Too many product lookups take longer than 300 ms.
           runbook_url: https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/tree/main/docs/runbooks

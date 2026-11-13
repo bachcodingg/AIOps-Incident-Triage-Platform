@@ -1,0 +1,110 @@
+# Unit tests for the static-threshold rules (detector a, baseline B0).
+# Run by `make gitops-lint`: promtool test rules gitops/observability/tests/*.test.yaml
+rule_files:
+  - ../files/static-rules.yaml
+
+evaluation_interval: 15s
+
+tests:
+  # gateway answers 1 in 11 requests with a 500 (9.1%), search-api 1 in 101 (1%).
+  - name: error rate above 5% fires after 2 minutes, 1% does not
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="shopsearch/gateway",http_response_status_code="200"}'
+        values: '0+15x80'
+      - series: 'http_server_request_duration_seconds_count{job="shopsearch/gateway",http_response_status_code="500"}'
+        values: '0+1.5x80'
+      - series: 'http_server_request_duration_seconds_count{job="shopsearch/search-api",http_response_status_code="200"}'
+        values: '0+15x80'
+      - series: 'http_server_request_duration_seconds_count{job="shopsearch/search-api",http_response_status_code="500"}'
+        values: '0+0.15x80'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StaticHighErrorRate
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: StaticHighErrorRate
+        exp_alerts:
+          - exp_labels: {component: gateway, job: shopsearch/gateway, detector: static, severity: baseline}
+            exp_annotations:
+              summary: "gateway answers 9.091% of requests with a 5xx (threshold 5%)."
+
+  # search-api uses 0.45 of its 0.5 CPU limit, gateway 0.1 of 0.5.
+  - name: CPU above 80% of the limit fires after 5 minutes
+    interval: 15s
+    input_series:
+      - series: 'container_cpu_usage_seconds_total{namespace="shopsearch",pod="search-api-1",container="search-api"}'
+        values: '0+6.75x80'
+      - series: 'kube_pod_container_resource_limits{namespace="shopsearch",pod="search-api-1",container="search-api",resource="cpu"}'
+        values: '0.5x80'
+      - series: 'container_cpu_usage_seconds_total{namespace="shopsearch",pod="gateway-1",container="gateway"}'
+        values: '0+1.5x80'
+      - series: 'kube_pod_container_resource_limits{namespace="shopsearch",pod="gateway-1",container="gateway",resource="cpu"}'
+        values: '0.5x80'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: StaticHighCPU
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: StaticHighCPU
+        exp_alerts:
+          - exp_labels: {component: search-api, container: search-api, detector: static, severity: baseline}
+            exp_annotations:
+              summary: "A search-api pod uses 90% of its CPU limit (threshold 80%)."
+
+  # catalog crash-loops: five restarts in a minute.
+  - name: more than two restarts in 15 minutes fires at once
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{namespace="shopsearch",pod="catalog-1",container="catalog"}'
+        values: '0x20 1 2 3 4 5x40'
+      - series: 'kube_pod_container_status_restarts_total{namespace="shopsearch",pod="gateway-1",container="gateway"}'
+        values: '0x40 1x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: StaticPodRestarts
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: StaticPodRestarts
+        exp_alerts:
+          - exp_labels: {component: catalog, container: catalog, detector: static, severity: baseline}
+            exp_annotations:
+              summary: "catalog restarted more than twice in 15 minutes."
+
+  # The worker stops being Ready 2.5 minutes in.
+  - name: a node that is not Ready for 2 minutes fires
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{node="incidentlens-worker",condition="Ready",status="true"}'
+        values: '1x10 0x30'
+      - series: 'kube_node_status_condition{node="incidentlens-control-plane",condition="Ready",status="true"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: StaticNodeNotReady
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: StaticNodeNotReady
+        exp_alerts:
+          - exp_labels: {component: node, node: incidentlens-worker, condition: Ready, status: "true", detector: static, severity: baseline}
+            exp_annotations:
+              summary: "Node incidentlens-worker is not Ready."
+
+  # Redis held on a pause image: its container stays unready.
+  - name: a container not ready for 5 minutes fires, a short blip does not
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_ready{namespace="shopsearch",pod="redis-0",container="redis"}'
+        values: '1x4 0x40'
+      - series: 'kube_pod_container_status_ready{namespace="shopsearch",pod="gateway-1",container="gateway"}'
+        values: '1x4 0x8 1x40'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StaticPodNotReady
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: StaticPodNotReady
+        exp_alerts:
+          - exp_labels: {component: redis, container: redis, detector: static, severity: baseline}
+            exp_annotations:
+              summary: "1 redis container(s) not ready for 5 minutes."
