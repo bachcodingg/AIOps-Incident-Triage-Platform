@@ -1,8 +1,6 @@
 # IncidentLens — AIOps incident-triage platform
 
-A production-style Kubernetes platform, built from code, observed with
-OpenTelemetry, broken on purpose with chaos experiments, and triaged by an LLM
-agent that is measured against plain threshold alerts and a rule-based baseline.
+
 
 [![ci](https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/bachcodingg/AIOps-Incident-Triage-Platform/actions/workflows/ci.yml)
 
