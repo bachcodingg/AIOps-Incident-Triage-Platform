@@ -1,6 +1,6 @@
 # IncidentLens: design doc
 
-
+Status: draft, updated week 6 (2026-11) · Owner: @bachcodingg · Reviewers: open
 
 ## 1. Problem and goal
 
