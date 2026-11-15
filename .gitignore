@@ -1,6 +1,6 @@
 # tools downloaded by the Makefile
 .bin/
-# gitignore
+
 # build output
 node_modules/
 dist/
