@@ -1,8 +1,5 @@
-# IncidentLens: local workflow on kind, plus the cloud session targets.
-# Needs: docker, make, bash, curl. kind, kubectl and helm are downloaded into
-# .bin/ if they are not already on PATH. The infra-* and cloud targets also need
-# terraform and terragrunt; the cloud targets need the aws CLI as well.
-# make file comment 
+
+
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
