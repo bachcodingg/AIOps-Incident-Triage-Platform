@@ -1,0 +1,45 @@
+# Triage: variants, models, prices and limits. Every number is here so that a
+# change shows up in Git. Tune on the tuning set only; after gate G3 (week 10)
+# nothing here changes again (docs/design.md section 6).
+
+# Triage starts this long after the incident opens: the correlator has had time
+# to group the first related alerts. The agent sees telemetry up to that moment.
+triage_delay_seconds: 120
+
+# Per incident. When a limit is reached the agent must answer with what it has.
+limits:
+  max_turns: 12
+  max_tool_calls: 20
+  max_input_tokens: 400000   # summed over the run's calls, cached tokens included
+  max_output_tokens: 40000
+  max_cost_usd: 0.50         # hard cap; the target is under $0.05 (design doc section 6)
+  max_seconds: 300
+  tool_timeout_s: 10
+
+# US dollars per million tokens, list prices as of 2026-11. Check them before
+# the week 10 runs. Cache writes are 1.25x input (5-minute cache), reads 0.05x.
+# A request a safety classifier declines can be answered by a fallback model;
+# its tokens are priced as the requested model's here, and the run log names
+# the model that answered.
+models:
+  claude-opus-5-5:
+    provider: anthropic
+    effort: medium            # Opus 5.5's default, set explicitly; high costs more tokens
+    price: {input: 4.0, output: 20.0, cache_read: 0.20, cache_write: 5.0}
+  claude-haiku-5-5:
+    provider: anthropic
+    effort: medium
+    price: {input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125}
+  qwen3:8b:
+    provider: ollama          # local, free: `ollama pull qwen3:8b`
+    host: http://localhost:11434
+
+# The triage variants of the evaluation. B2 is the rule baseline (rule_rca.py),
+# no model. A2 and A3 differ from A1 in one thing each, so they measure what
+# traces and runbooks are worth. On the low-cost path (design doc section 7)
+# they can run on the local model instead, which then measures less cleanly.
+variants:
+  A1: {model: claude-opus-5-5, traces: true, runbooks: true}
+  A2: {model: claude-opus-5-5, traces: false, runbooks: true}
+  A3: {model: claude-opus-5-5, traces: true, runbooks: false}
+  A4: {model: qwen3:8b, traces: true, runbooks: true}
