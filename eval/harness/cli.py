@@ -4,6 +4,7 @@
   harness verify --run RUN --recording REC                  does the data still match the lock?
   harness score --run RUN --recording REC                   B0/B1/B2 detection on the tuning set
   harness triage --run RUN --recording REC --variant A1     triage and score RCA on the tuning set (week 8)
+  harness mttr --run RUN --recording REC [--baseline-run R0 --baseline-recording REC0]   time to recover (week 9)
 
 --run finds the sealed labels (~/.incidentlens/labels/RUN), the public seal
 (eval/seals/) and the lock; each can also be given as a path.
@@ -26,6 +27,7 @@ from recorder.store import Recording, resolve
 
 from .dataset import FreezeError, freeze, load_split, verify_lock
 from .score import markdown, score
+from .mttr import markdown as mttr_markdown, recover_times, summary as mttr_summary
 from .triage import markdown as triage_markdown, run_set, summary
 
 SEALS = REPO_ROOT / "eval" / "seals"
@@ -131,6 +133,26 @@ def cmd_triage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _incidents(recording: str) -> list[dict]:
+    path = Recording(resolve(recording)).path / "incidents-B2.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def cmd_mttr(args: argparse.Namespace) -> int:
+    runs = {f"with the loop ({args.run})": (args.run, args.recording)}
+    if args.baseline_run:
+        runs[f"without ({args.baseline_run})"] = (args.baseline_run, args.baseline_recording)
+    results = {}
+    for name, (run, rec) in runs.items():
+        rows = recover_times(DEFAULT_LABELS_DIR / run / "labels.jsonl", _incidents(rec))
+        for r in rows:
+            t = "missed" if r["recover_s"] is None else f"{r['recover_s'] / 60:.1f} min"
+            print(f"  {name}: {r['fault']} on {r['target']}: {t}")
+        results[name] = mttr_summary(rows)
+    print(mttr_markdown(results))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="harness", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -178,6 +200,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--set", choices=["tuning", "test"], default="tuning")
     s.add_argument("--final", action="store_true", help="week 10 only: allow --set test")
     s.set_defaults(func=cmd_triage)
+
+    s = sub.add_parser("mttr", help="time to recover per fault of a live-test run, against a run without the loop")
+    s.add_argument("--run", required=True, help="the chaos run made with the loop running")
+    s.add_argument("--recording", required=True, help="its recording, after `make detect`")
+    s.add_argument("--baseline-run", help="the same faults without the loop")
+    s.add_argument("--baseline-recording")
+    s.set_defaults(func=cmd_mttr)
     return p
 
 
