@@ -93,9 +93,15 @@ class View:
     @classmethod
     def at(cls, recording: Recording, now: float, anomaly_alerts: Iterable[Alert] = (),
            history_s: float = HISTORY_S, graph: ServiceGraph | None = None) -> View:
-        chunks = [c for c in (cut(ch, now) for ch in recording.chunks(now - history_s, now + 1)) if c is not None]
+        return cls.from_chunks(recording.chunks(now - history_s, now + 1), now, anomaly_alerts, graph)
+
+    @classmethod
+    def from_chunks(cls, chunks: Iterable[dict[str, Any]], now: float, anomaly_alerts: Iterable[Alert] = (),
+                    graph: ServiceGraph | None = None) -> View:
+        """The same view from chunks in memory: the live loop records them as it goes."""
+        chunks = [c for c in (cut(ch, now) for ch in chunks) if c is not None]
         if not chunks:
-            raise ValueError(f"the recording has nothing before {now}")
+            raise ValueError(f"no telemetry before {now}")
         frame, recorded = load(chunks)
         alerts = [v for a in list(recorded) + list(anomaly_alerts) if (v := visible_alert(a, now))]
         graph = graph or ServiceGraph.load()
