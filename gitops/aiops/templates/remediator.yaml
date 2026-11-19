@@ -1,0 +1,88 @@
+{{- /*
+The remediator's identity (week 9). A second service account, so that what the
+agent can read and what the remediator can change stay apart: the `aiops`
+account never writes, this one writes four kinds of change and nothing else.
+
+  rollback   abort a canary (rollouts/status), or put a service's ArgoCD
+             Application back to its previous release (applications, by name)
+  restart    a rollout's restartAt, the Redis Deployment's pod template,
+             the PostgreSQL Cluster's restart annotation
+  scale_out  a service's HorizontalPodAutoscaler minReplicas
+
+Every write rule names its objects (resourceNames), so the account cannot
+create, delete, read secrets or touch anything it was not given by name. It
+cannot change the root Application either: a remediation never takes GitOps
+away from Git. No read rights beyond the objects it patches; triage reads as
+`aiops`.
+*/ -}}
+{{- $sa := .Values.remediator.serviceAccount -}}
+{{- $ns := .Release.Namespace -}}
+{{- $r := .Values.remediator -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $ns }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aiops-remediate
+  namespace: {{ .Values.workloadNamespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [rollouts]
+    resourceNames: {{ toJson $r.rollouts }}
+    verbs: [get, patch]
+  - apiGroups: [argoproj.io]
+    resources: [rollouts/status]
+    resourceNames: {{ toJson $r.rollouts }}
+    verbs: [patch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    resourceNames: {{ toJson $r.rollouts }}
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: {{ toJson $r.deployments }}
+    verbs: [get, patch]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: {{ toJson $r.postgresClusters }}
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-remediate
+  namespace: {{ .Values.workloadNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aiops-remediate
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aiops-remediate
+  namespace: {{ .Values.argocdNamespace }}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    resourceNames: {{ toJson $r.rollouts }}
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aiops-remediate
+  namespace: {{ .Values.argocdNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aiops-remediate
+subjects:
+  - {kind: ServiceAccount, name: {{ $sa }}, namespace: {{ $ns }}}

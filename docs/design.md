@@ -1,6 +1,6 @@
 # IncidentLens: design doc
 
-Status: draft, updated week 8 (2026-11) · Owner: @bachcodingg · Reviewers: open
+Status: draft, updated week 9 (2026-11) · Owner: @bachcodingg · Reviewers: open
 
 ## 1. Problem and goal
 
@@ -401,7 +401,63 @@ Known gaps after week 8:
 - The rule baseline's thresholds are checked on synthetic data only, like the
   anomaly detector's.
 
-## 13. Risks
+## 13. Remediation and the console (week 9)
+
+The loop that week 8 ran on recordings now runs on the live cluster, and its
+verdicts can change something. Operating details: [aiops/README.md](../aiops/README.md#remediation-and-the-live-loop).
+
+```mermaid
+flowchart LR
+  k8s[(cluster)] -->|read as aiops| live[live loop<br/>every 30 s]
+  live --> det[detect + correlate] --> tri[triage<br/>agent or B2]
+  tri --> pol{policy}
+  pol -->|canary in progress| auto[abort canary]
+  pol -->|rollback, restart,<br/>scale_out| ui[console:<br/>one approval]
+  pol -->|escalate, verify,<br/>repeat| human[a human]
+  ui -->|approved, plan unchanged| act[remediator]
+  auto --> act
+  act -->|patch as<br/>aiops-remediator| k8s
+  live & ui & act --> audit[(audit log<br/>hash-chained)]
+```
+
+| Decision | Why |
+|---|---|
+| A second service account for the remediator, `get` and `patch` on named objects only | the agent's identity never writes; the remediator's can make four kinds of change to fourteen named objects. It cannot create, delete, read secrets, exec, or touch the root Application |
+| Automatic only for a canary in progress | aborting a canary sends traffic back to the version that served a minute ago: the one change that cannot make things worse. Everything else needs one human click (the plan's rule) |
+| Rollback through ArgoCD, not around it | releases here are parameter changes on a service's Application, so going back is restoring the previous release's parameters. A release that came from Git is refused: undoing it outside Git would leave Git lying about what runs |
+| Scale-out on the HPA's minReplicas, with an `ignoreDifferences` for that field | the HPA owns the replica count; without the ignore rule, self-heal would put Git's value back within seconds |
+| Plan at proposal time, plan again at execution time, run only if unchanged | an approval is for a specific change; if the cluster moved in between, the approved change is no longer the right one |
+| A cooldown (30 min per action and target) and a cap (3 per hour) | the classic way an automated fixer hurts: repeating a fix that did not work, or fixing everything at once |
+| Hash-chained audit log in SQLite | every approval, rejection and command, with who and when, in a log that shows an edit. One file, no server |
+| The loop runs beside the cluster, as the recorder and chaos-runner do | it impersonates the two accounts from the operator's kubeconfig, so RBAC is the same as in the cluster. Running it in the cluster would need an image, a model API key in the cluster (External Secrets) and an exposed console with a login: more moving parts than the evaluation needs. Section 11 had planned an in-cluster deployment for this week; this replaces it |
+| The console listens on 127.0.0.1 and has no login | it is the operator's console on the operator's machine, like `make grafana`. The name on an approval is recorded, not verified; a shared deployment would need SSO first |
+| React, polling every 5 s, served by the loop | no second server and no websocket for a page one person looks at |
+| The live view goes through the replay code (`View.from_chunks`) | the live agent sees exactly what the evaluated one saw, through the same cut-off |
+
+**Week 9, done when** a bad release is detected, explained and rolled back with
+one approval, on video. The code is done and tested: unit tests run the loop on
+synthetic telemetry against a fake kubectl, from the incident opening to the
+approval, the patch and the recovery (`make aiops-unit`), and CI checks the
+remediator's rights and dry-runs its patches on kind (`make remediate-test`).
+The video and the live test of 10 incidents (`make live-test`, with and
+without `make console`, then `make mttr`) need a running cluster and an
+operator.
+
+Known gaps after week 9:
+
+- Not run against a live incident yet; the CI test changes nothing on purpose.
+- The restart annotation for PostgreSQL follows CloudNativePG's `kubectl cnpg
+  restart`; it is dry-run in CI, but no restart has been watched end to end.
+- A scale-out stays until Git's value comes back with the next chart change or
+  a manual sync. Nothing scales back in by itself.
+- Time to recover is the incident's close (its last alert resolved) minus the
+  fault's start: a proxy for recovery, not a measurement of user impact.
+- In the live loop, an incident's identity is its first alert; when two
+  incidents merge later, the merged one keeps the older identity, and a long
+  anomaly alert recomputed over a sliding window can occasionally open a
+  second incident.
+
+## 14. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -411,7 +467,7 @@ Known gaps after week 8:
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 14. Open questions
+## 15. Open questions
 
 - Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM? `qwen3:8b`
   is the first candidate (week 8, `aiops/triage/config.yaml`); the tuning set decides.

@@ -77,3 +77,21 @@ def test_run_set_triages_matched_incidents_and_stores_runs_without_labels(tmp_pa
 def test_triage_refuses_the_test_set_without_final(capsys):
     assert main(["triage", "--run", "x", "--recording", "r", "--set", "test"]) == 2
     assert "week 10" in capsys.readouterr().err
+
+
+def test_time_to_recover_per_fault(tmp_path):
+    from chaos_runner.labels import LabelWriter
+    from harness.mttr import markdown as mttr_markdown, recover_times, summary as mttr_summary
+
+    w = LabelWriter(tmp_path / "labels" / "run-live")
+    w.write({"kind": "run-start", "run": "run-live"})
+    w.write({**{k: v for k, v in LABEL.items() if k != "seq"}, "target": "catalog"})
+    w.write({**{k: v for k, v in MISSED.items() if k != "seq"}, "target": "coredns"})
+    w.write({**{k: v for k, v in LABEL.items() if k != "seq"}, "aborted": True})
+    incidents = [{"id": "inc-1", "opened": iso(FAULT + 120), "closed": iso(FAULT + 120 + 480)}]
+    rows = recover_times(w.path, incidents)
+    assert [(r["fault"], r["recover_s"]) for r in rows] == [("F02", 600), ("F09", None)]
+    s = mttr_summary(rows)
+    assert s["recovered"] == 1 and s["median_s"] == 600
+    text = mttr_markdown({"with": s, "without": {**s, "median_s": 1200}})
+    assert "-50%" in text

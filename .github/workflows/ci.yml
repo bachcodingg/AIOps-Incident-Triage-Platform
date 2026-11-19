@@ -59,10 +59,11 @@ jobs:
         with: {python-version: "3.12"}
       - run: make chaos-unit
 
-  # Recorder, detectors, correlator and the dataset freeze, against synthetic
-  # recordings and fake labels: no cluster.
+  # Recorder, detectors, correlator, the dataset freeze, triage (week 8) and the
+  # remediator, live loop and console API (week 9), against synthetic
+  # recordings, fake labels, a scripted model and a fake kubectl: no cluster.
   aiops-unit:
-    name: detectors, correlator and dataset freeze
+    name: detectors, triage, remediator and harness
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -70,8 +71,23 @@ jobs:
         with: {python-version: "3.12"}
       - run: make aiops-unit
 
+  # The operator console (week 9): types, unit tests, production build.
+  console:
+    name: console (typecheck, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: aiops/console}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: {node-version: "24", cache: npm, cache-dependency-path: aiops/console/package-lock.json}
+      - run: npm ci --no-fund --no-audit
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
   e2e:
-    name: e2e on kind (make up, canary, policies, observability, detection)
+    name: e2e on kind (make up, canary, policies, observability, detection, remediation)
     needs: [unit, gitops-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -97,6 +113,10 @@ jobs:
       # recorded as that account goes through the detectors and the correlator.
       - name: make detect-test
         run: make detect-test
+      # Week 9: the remediator may make exactly the changes it needs and nothing
+      # else, and its patches pass the API server with --dry-run=server.
+      - name: make remediate-test
+        run: make remediate-test
       - name: Diagnostics
         if: failure()
         run: |

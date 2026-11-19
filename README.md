@@ -54,6 +54,8 @@ make canary-test # a good release is promoted, a bad one aborts on its own
 make obs-test    # a request followed from the gateway to its database span
 make chaos-test FAULT=F12   # break it on purpose: one fault, its symptom, recovery
 make detect-test # detectors and the read-only aiops account on the live cluster
+make remediate-test # the remediator's rights, and its patches dry-run
+make console     # live loop and operator console on http://127.0.0.1:8090
 make grafana     # Grafana on http://localhost:3000 and its admin password
 make down        # delete the cluster
 ```
@@ -79,7 +81,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 | [`infra/`](infra/) | Terraform modules for AWS EKS and OCI, Terragrunt environments, kind |
 | [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies, SLOs and dashboards |
 | [`chaos/`](chaos/) | fault catalog (F01–F14), Chaos Mesh experiments, and `chaos-runner`, which injects them and seals the ground truth |
-| [`aiops/`](aiops/) | telemetry recorder, detectors and correlator (week 6), triage agent and rule baseline (week 8); the remediator follows (week 9) |
+| [`aiops/`](aiops/) | telemetry recorder, detectors and correlator (week 6), triage agent and rule baseline (week 8), remediator, live loop and console (week 9) |
 | [`eval/`](eval/) | evaluation harness and results (weeks 6–10) |
 | [`docs/`](docs/) | design doc, [runbooks](docs/runbooks/) for every fault; postmortems later |
 
@@ -92,7 +94,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [x] **Week 5 — Chaos and runbooks:** the 14 faults as Chaos Mesh experiments, bad releases and load, `chaos-runner` with a seeded random schedule and hash-chained sealed labels, a runbook per fault, and a dry run in CI that proves each fault's symptom on its own cluster ([how faults are injected](chaos/README.md))
 - [ ] **Week 6 — Detection and correlation (gate G2):** static-threshold rules with promtool tests, burn-rate alerts labelled as a detector, anomaly detection (rolling MAD, Isolation Forest, missing telemetry), a correlator over the static and Tempo service graphs, a recorder that reads as a read-only account blind to the chaos namespace, and a freeze that hash-locks the test set. The code is done and tested; gate G2 waits for the recording itself, about 6 days of laptop time ([steps](docs/design.md#11-detection-and-correlation-week-6))
 - [ ] **Week 8 — Triage agent:** an LLM agent with 8 read-only, typed tools and hard limits per incident, replaying recorded incidents with nothing visible after triage time; strict JSON verdicts (retry once, then escalate); the rule baseline in the same format; A1 to A4 variants and the tuning-set scorer. Code done and tested on synthetic recordings with a scripted model; tuning waits for the gate G2 dataset ([design](docs/design.md#12-triage-agent-week-8))
-- [ ] Week 9 — Remediation and console
+- [ ] **Week 9 — Remediation and console:** a live loop on the cluster (detect, correlate, triage, decide), a remediator with its own narrow RBAC (rollback through Argo Rollouts or ArgoCD, restart, scale out), automatic only for a canary in progress and one approval for the rest, a React console with evidence, Grafana links and a hash-chained audit log, and `make mttr` for the live test. Code done and tested; the 10-incident live test and the video need a running cluster ([design](docs/design.md#13-remediation-and-the-console-week-9))
 - [ ] Week 10 — Evaluation runs (**gate G3**)
 - [ ] Week 11 — Write-up
 
