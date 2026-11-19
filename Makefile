@@ -240,7 +240,7 @@ $(AIOPS_PY): aiops/requirements.txt aiops/requirements-dev.txt chaos/runner/requ
 	@touch $@
 
 .PHONY: aiops-unit
-aiops-unit: $(AIOPS_PY) ## Unit test the recorder, detectors, correlator and dataset freeze (no cluster)
+aiops-unit: $(AIOPS_PY) ## Unit test the recorder, detectors, correlator, triage agent and harness (no cluster, no model)
 	cd aiops && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 	cd eval && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 
@@ -277,6 +277,19 @@ detect: $(AIOPS_PY) ## Alerts and B0/B1/B2 incidents for a recording: make detec
 detect-score: $(AIOPS_PY) ## Detection metrics on the tuning set: make detect-score RUN=run-... RECORDING=...
 	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make detect-score RUN=<run id> RECORDING=<name>"; exit 1; }
 	$(AIOPS) harness score --run '$(RUN)' --recording '$(RECORDING)'
+
+# Week 8: triage. B2 (the rule baseline) is free; A1 to A3 call Claude and cost
+# money (ANTHROPIC_API_KEY or an `ant auth login` profile); A4 and MODEL=qwen3:8b
+# need a local Ollama. Runs land in eval/runs/<run>/tuning, scores next to the labels.
+.PHONY: triage
+triage: $(AIOPS_PY) ## Triage and score the tuning set: make triage RUN=... RECORDING=... [VARIANTS="B2 A1"] [SEEDS=0] [MODEL=] [LIMIT=]
+	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make triage RUN=<run id> RECORDING=<name> [VARIANTS=\"B2 A1\"] [SEEDS=\"0 1 2\"] [MODEL=qwen3:8b] [LIMIT=3]"; exit 1; }
+	$(AIOPS) harness triage --run '$(RUN)' --recording '$(RECORDING)' --variant $(or $(VARIANTS),B2) --seeds $(or $(SEEDS),0) $(if $(MODEL),--model '$(MODEL)') $(if $(LIMIT),--limit $(LIMIT))
+
+.PHONY: triage-one
+triage-one: $(AIOPS_PY) ## Replay one incident: make triage-one RECORDING=... INCIDENT=inc-0007 [VARIANT=A1] [MODEL=]
+	@test -n "$(RECORDING)" && test -n "$(INCIDENT)" || { echo "usage: make triage-one RECORDING=<name> INCIDENT=<id> [VARIANT=A1] [MODEL=qwen3:8b]"; exit 1; }
+	$(AIOPS) triage run --recording '$(RECORDING)' --incident '$(INCIDENT)' --variant $(or $(VARIANT),A1) $(if $(MODEL),--model '$(MODEL)')
 
 .PHONY: dataset-freeze
 dataset-freeze: $(AIOPS_PY) ## Gate G2: split tuning/test, hash-lock the test set: make dataset-freeze RUN=... RECORDING=... MODEL=...

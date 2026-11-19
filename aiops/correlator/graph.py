@@ -14,8 +14,12 @@ STATIC_GRAPH = Path(__file__).with_name("graph.yaml")
 
 
 class ServiceGraph:
-    def __init__(self, edges: set[frozenset[str]], infrastructure: set[str], aliases: dict[str, str]):
+    def __init__(self, edges: set[frozenset[str]], infrastructure: set[str], aliases: dict[str, str],
+                 calls: list[tuple[str, str]] | None = None):
         self.edges = set(edges)
+        # graph.yaml lists each edge caller first; the correlator ignores the
+        # direction, the rule baseline and the agent's prompt use it.
+        self.calls = list(calls or [])
         self.infrastructure = set(infrastructure)
         self.aliases = dict(aliases)
         self.observed: set[frozenset[str]] = set()
@@ -23,7 +27,8 @@ class ServiceGraph:
     @classmethod
     def load(cls, path: Path = STATIC_GRAPH) -> ServiceGraph:
         spec = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls({frozenset(e) for e in spec["edges"]}, set(spec["infrastructure"]), spec.get("aliases", {}))
+        return cls({frozenset(e) for e in spec["edges"]}, set(spec["infrastructure"]), spec.get("aliases", {}),
+                   [(a, b) for a, b in spec["edges"]])
 
     def add_observed(self, frame: Frame, min_rate: float = 0.01) -> set[frozenset[str]]:
         """Add every client->server pair Tempo saw at a meaningful rate. Returns the new edges."""
@@ -41,6 +46,25 @@ class ServiceGraph:
                 new.add(edge)
                 self.edges.add(edge)
         return new
+
+    def directed(self) -> list[tuple[str, str]]:
+        """(caller, callee) for every static edge, in the order graph.yaml lists them."""
+        return list(self.calls)
+
+    def callees(self, component: str) -> list[str]:
+        return [b for a, b in self.calls if a == component]
+
+    def depth(self, component: str) -> int:
+        """Hops below the component nobody calls (the gateway, or the indexer): 0 at the top."""
+        callers = {b: [a for a, x in self.calls if x == b] for _, b in self.calls}
+        seen, todo, d = {component}, [component], 0
+        while todo:
+            up = [c for x in todo for c in callers.get(x, []) if c not in seen]
+            if not up:
+                return d
+            seen.update(up)
+            todo, d = up, d + 1
+        return d
 
     def related(self, a: str, b: str) -> bool:
         """Same component, direct neighbours, or one of them is infrastructure."""

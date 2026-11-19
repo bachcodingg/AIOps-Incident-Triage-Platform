@@ -1,6 +1,6 @@
 # IncidentLens: design doc
 
-Status: draft, updated week 6 (2026-11) · Owner: @bachcodingg · Reviewers: open
+Status: draft, updated week 8 (2026-11) · Owner: @bachcodingg · Reviewers: open
 
 ## 1. Problem and goal
 
@@ -327,9 +327,81 @@ Known gaps after week 6:
 - Prometheus itself holds series about the k6 pods and Chaos Mesh. The
   recorder's fixed queries leave them out, but the agent's free-form
   `promql_query` tool (week 8) will need a namespace filter to keep that promise.
+  Closed in week 8: the agent has no free-form PromQL; `query_metric` reads
+  only the recorded queries (section 12).
 - On kind, the kubelet reports no volume statistics, so B0 cannot see F13.
 
-## 12. Risks
+## 12. Triage agent (week 8)
+
+The agent answers one question per incident: what broke, and what one action
+fixes it. It runs on the same recordings as the detectors, in replay mode, so
+every variant in section 6 sees exactly the same incidents and the evaluation
+costs only the model. Operating details: [aiops/README.md](../aiops/README.md#triage).
+
+```mermaid
+flowchart LR
+  rec[(recording)] --> cut[replay view<br/>nothing after triage time]
+  inc[incident<br/>from the correlator] --> brief[brief]
+  cut --> tools[8 read-only tools]
+  brief --> loop{agent loop<br/>limits}
+  tools <--> loop
+  loop --> v{verdict valid?}
+  v -->|yes| out[verdict + run log]
+  v -->|no, once| loop
+  v -->|no, twice| esc[none_escalate]
+  cut --> rule[rule baseline B2] --> out
+```
+
+| Decision | Why |
+|---|---|
+| Replay, not a live agent, for the evaluation | 40 test incidents x 3 seeds x 4 variants must see the same data; a live run cannot be repeated. The remediation loop in week 9 runs the same agent live |
+| One cut-off function between the recording and every tool | leaking the future is the easiest way to fake a good result. The recorder takes rollout status about 90 s after a chunk ends, so that status is the most likely leak, and is dropped unless it was observed by triage time |
+| Triage starts 2 minutes after the incident opens | the correlator has the first related alerts by then; the agent's own latency is measured on top |
+| Tools over fixed queries, no free-form PromQL or kubectl | keeps the chaos namespace out of reach (section 11) and makes a run cheap to audit. The cost is that the agent cannot ask for a metric nobody recorded |
+| Pydantic for tool arguments and the verdict | one definition gives the model its schema and the code its validation. A bad call is returned to the model as an error to fix, not a crash |
+| The verdict is plain JSON in the last message, checked by the code, not forced by the API | the same loop drives Claude and a local model; the plan's rule is "retry once, then `none_escalate`", which needs the check in the code anyway |
+| Hypotheses are component + category, up to 3 | that is what the labels hold (section 5), and what RCA top-1 and top-3 count |
+| The action has a target, checked against what it can apply to | a rollback needs a rollout, so `rollback postgres` is rejected before it can be proposed. Week 9's remediator executes exactly this |
+| Limits per incident: turns, tool calls, tokens, dollars, wall clock | an agent that loops costs money and time; at a limit it must answer with what it has |
+| A fixed system prompt, no times or incident data in it, with automatic prompt caching | it is identical for every incident, so later turns and incidents read it from the cache: the main lever on the cost target |
+| Runbook index in the prompt, full runbooks through a tool | the index is short enough to cache; the agent reads only the runbooks it suspects. A3 removes both |
+| Claude Opus 5.5 at medium effort for A1, a local open-weight model for A4 | A1 is the strongest model the budget allows; A4 asks how much of the result survives on free hardware. Prices are in `aiops/triage/config.yaml` |
+| The API's refusal fallback is on, and each turn records the model that answered | a declined request still gets an answer, and a verdict from a fallback model stays visible in the results |
+| The rule baseline returns the same Verdict | one scorer for B2 and every A variant, so the comparison cannot drift |
+| Runs (no labels) in Git, scores (with labels) next to the sealed labels | anyone can audit a verdict; the repository the agent's runbooks live in still holds no ground truth |
+
+**How B2 decides.** For every service, the error ratio and p95 latency, and
+per route at the gateway; for every container, readiness, restarts, CPU and
+memory against the limits; the database's growth; nodes and CoreDNS. A signal
+"rose" at the first two samples in a row outside its range over the hour
+before (round thresholds, not fitted). A lost node or DNS wins outright;
+otherwise the earliest rise, ties within 30 s to the deeper component. A table
+maps the winner's signals to a category and action: a release of it in the
+last 30 minutes means bad-release and rollback; a data store down means
+dependency and restart; memory, restart; CPU, scale out; load at the gateway,
+scale out; latency alone, the link to its callee, escalate.
+
+**Week 8, done when** the agent produces a valid verdict on every tuning
+incident and each wrong answer has an explanation. The code, the tools and
+the scoring are done and tested on synthetic recordings (`make aiops-unit`,
+with a scripted model: no network, no cost). Tuning on the real tuning set
+waits for gate G2.
+
+Known gaps after week 8:
+
+- No run on recorded data yet: no measured cost, latency or accuracy. The
+  $0.50 cap is a safety net; the target is under $0.05 (section 6), and with
+  Opus 5.5 that needs the cache to work. The first real runs will show whether
+  it does.
+- `unsafe` is judged by a rule in the harness (a write action where the label
+  says escalate, or on a component the root cause does not name). Week 9 has to
+  decide whether that is the right definition before week 10 counts it.
+- Only 3 full traces per 5-minute chunk are recorded, so `get_traces` often
+  shows a summary without spans.
+- The rule baseline's thresholds are checked on synthetic data only, like the
+  anomaly detector's.
+
+## 13. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -339,9 +411,10 @@ Known gaps after week 6:
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 13. Open questions
+## 14. Open questions
 
-- Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM?
+- Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM? `qwen3:8b`
+  is the first candidate (week 8, `aiops/triage/config.yaml`); the tuning set decides.
 - Is the AWS free plan allowed to create EKS, or does each session need paid mode?
 - ~~Does the correlator need Tempo's live service graph, or is a static graph enough?~~
   Both, joined (section 11, week 6).

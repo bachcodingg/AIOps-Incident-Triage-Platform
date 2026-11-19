@@ -3,6 +3,7 @@
   harness freeze --run RUN --recording REC [--model NAME]   split, hash, write eval/dataset/RUN.lock.json
   harness verify --run RUN --recording REC                  does the data still match the lock?
   harness score --run RUN --recording REC                   B0/B1/B2 detection on the tuning set
+  harness triage --run RUN --recording REC --variant A1     triage and score RCA on the tuning set (week 8)
 
 --run finds the sealed labels (~/.incidentlens/labels/RUN), the public seal
 (eval/seals/) and the lock; each can also be given as a path.
@@ -25,9 +26,11 @@ from recorder.store import Recording, resolve
 
 from .dataset import FreezeError, freeze, load_split, verify_lock
 from .score import markdown, score
+from .triage import markdown as triage_markdown, run_set, summary
 
 SEALS = REPO_ROOT / "eval" / "seals"
 LOCKS = REPO_ROOT / "eval" / "dataset"
+RUNS = REPO_ROOT / "eval" / "runs"
 
 
 def _labels(args: argparse.Namespace) -> Path:
@@ -99,6 +102,35 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_triage(args: argparse.Namespace) -> int:
+    if args.set == "test" and not args.final:
+        print("error: the test set is triaged once, in week 10, with --final (gate G3). Tune on --set tuning.",
+              file=sys.stderr)
+        return 2
+    labels = _labels(args)
+    split = Path(args.split) if args.split else labels.parent / "split.json"
+    items = load_split(split)[args.set]
+    rec = Recording(resolve(args.recording))
+    inc_path = Path(args.incidents) if args.incidents else rec.path / "incidents-B2.jsonl"
+    incidents = [json.loads(line) for line in inc_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    run_id = args.run or labels.parent.name
+    runs_dir = Path(args.runs) if args.runs else RUNS / run_id / args.set
+    results = {}
+    for variant in args.variant:
+        print(f"{variant}: {sum(i['kind'] == 'fault' for i in items)} faults x {len(args.seeds)} seed(s)")
+        rows = run_set(rec, items, incidents, variant, args.seeds, runs_dir, limit=args.limit,
+                       **({"model": args.model} if args.model else {}))
+        results[variant] = summary(rows)
+        # Rows pair runs with labels: they stay with the sealed labels, out of Git.
+        out = labels.parent / f"triage-{args.set}-{variant}.json"
+        out.write_text(json.dumps({"rows": rows, "summary": results[variant]}, indent=1, default=str) + "\n",
+                       encoding="utf-8")
+    text = triage_markdown(results, args.set)
+    print(text)
+    print(f"runs in {runs_dir}; scores next to the labels in {labels.parent}")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="harness", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -133,6 +165,19 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--out", help="also write the markdown here")
     s.add_argument("--json", help="also write the numbers here")
     s.set_defaults(func=cmd_score)
+
+    s = sub.add_parser("triage", help="triage the incidents of a set with one or more variants, and score them")
+    common(s)
+    s.add_argument("--recording", required=True)
+    s.add_argument("--variant", nargs="+", default=["B2"], help="B2 (rule, free), A1-A4 (model; A1-A3 cost money)")
+    s.add_argument("--seeds", type=int, nargs="+", default=[0])
+    s.add_argument("--model", help="override the variants' model, e.g. qwen3:8b for free tuning runs")
+    s.add_argument("--incidents", help="default: incidents-B2.jsonl in the recording (`make detect`)")
+    s.add_argument("--limit", type=int, help="only the first N faults: a cheap smoke run")
+    s.add_argument("--runs", help=f"where the runs go (default: {RUNS}/<run>/<set>)")
+    s.add_argument("--set", choices=["tuning", "test"], default="tuning")
+    s.add_argument("--final", action="store_true", help="week 10 only: allow --set test")
+    s.set_defaults(func=cmd_triage)
     return p
 
 
