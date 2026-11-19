@@ -1,0 +1,84 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1c2330;
+  --muted: #667085;
+  --line: #e3e6eb;
+  --accent: #2f5bd3;
+  --act: #c2410c;
+  --act-bg: #fff1e8;
+  --ok: #157347;
+  --ok-bg: #e8f6ee;
+  --warn: #8a6100;
+  --warn-bg: #fff7d6;
+  --off-bg: #eef0f3;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --panel: #1a1f27;
+    --text: #e6e9ef;
+    --muted: #98a2b3;
+    --line: #2a313c;
+    --accent: #7aa2ff;
+    --act: #ff9a62;
+    --act-bg: #3a2216;
+    --ok: #5fd39a;
+    --ok-bg: #16301f;
+    --warn: #f2c94c;
+    --warn-bg: #33290f;
+    --off-bg: #262c36;
+  }
+}
+
+body { margin: 0; background: var(--bg); }
+.app { max-width: 1400px; margin: 0 auto; padding: 0 16px 32px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 20px 0 6px; }
+nav button { background: none; border: none; padding: 6px 10px; border-radius: 6px; color: var(--muted); cursor: pointer; font: inherit; }
+nav button.on { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+.status { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--muted); }
+main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-top: 16px; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+aside ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+aside li { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; cursor: pointer; }
+aside li.on { border-color: var(--accent); }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.id { font-weight: 600; margin: 4px 0 2px; word-break: break-all; }
+.muted { color: var(--muted); }
+.detail, .audit { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }
+.summary { font-size: 15px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--off-bg); color: var(--muted); font-weight: 500; }
+.pill.act { background: var(--act-bg); color: var(--act); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.wait { background: var(--off-bg); color: var(--text); }
+.proposal { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.proposal.pending { border-left-color: var(--act); background: var(--act-bg); }
+.proposal.executed { border-left-color: var(--ok); }
+.proposal p { margin: 6px 0; }
+.decide { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.decide input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+button.approve, button.reject { padding: 6px 14px; border-radius: 6px; border: 1px solid transparent; font: inherit; font-weight: 600; cursor: pointer; }
+button.approve { background: var(--ok); color: white; }
+button.reject { background: var(--panel); border-color: var(--line); color: var(--text); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+code, pre { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 12px; }
+pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.hypotheses li, .timeline li, .alerts li { margin: 4px 0; }
+.links { padding-left: 18px; }
+a { color: var(--accent); }
+.ok { color: var(--ok); }
+.error { color: var(--act); }
+.empty { color: var(--muted); padding: 16px; }
+.call { margin: 8px 0; }
