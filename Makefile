@@ -243,6 +243,7 @@ $(AIOPS_PY): aiops/requirements.txt aiops/requirements-dev.txt chaos/runner/requ
 aiops-unit: $(AIOPS_PY) ## Unit test recorder, detectors, correlator, triage, remediator, loop and harness (no cluster, no model)
 	cd aiops && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 	cd eval && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
+	$(AIOPS) harness gate-check
 
 .PHONY: record
 record: tools $(AIOPS_PY) ## Record telemetry as the aiops account: make record NAME=baseline [HOURS=72]
@@ -348,6 +349,23 @@ mttr: $(AIOPS_PY) ## Time to recover of a live-test run against one without the 
 	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make mttr RUN=<run id> RECORDING=<name> [BASELINE_RUN=... BASELINE_RECORDING=...]"; exit 1; }
 	$(AIOPS) harness mttr --run '$(RUN)' --recording '$(RECORDING)' \
 	  $(if $(BASELINE_RUN),--baseline-run '$(BASELINE_RUN)' --baseline-recording '$(BASELINE_RECORDING)')
+
+# --- week 10: evaluation runs (gate G3) -----------------------------------------
+# Once: every detector and every variant on the locked test set, 3 seeds, under
+# one spending cap (BUDGET, USD, default 10). The detectors run again first, on
+# the frozen config. A stopped run resumes only while nothing that decides a
+# verdict has changed (eval/dataset/<run>.g3.json says what did).
+.PHONY: eval-final
+eval-final: $(AIOPS_PY) ## Gate G3, once: make eval-final RUN=... RECORDING=... MODEL=... [BUDGET=10] [VARIANTS="B2 A1 A4 A2 A3"]
+	@test -n "$(RUN)" && test -n "$(RECORDING)" && test -n "$(MODEL)" || { echo "usage: make eval-final RUN=<run id> RECORDING=<name> MODEL=<baseline model> [BUDGET=10]"; exit 1; }
+	$(MAKE) --no-print-directory detect RECORDING='$(RECORDING)' MODEL='$(MODEL)'
+	$(AIOPS) harness final --run '$(RUN)' --recording '$(RECORDING)' --model '$(MODEL)' \
+	  $(if $(BUDGET),--budget $(BUDGET)) $(if $(VARIANTS),--variant $(VARIANTS))
+
+.PHONY: results
+results: $(AIOPS_PY) ## eval/results.md, results.json, charts and the README table: make results RUN=... [MTTR_RUN=live-run] [SET=tuning]
+	@test -n "$(RUN)" || { echo "usage: make results RUN=<run id> [MTTR_RUN=<live-test run>] [SET=tuning] [PARTIAL=1]"; exit 1; }
+	$(AIOPS) harness results --run '$(RUN)' $(if $(SET),--set $(SET)) $(if $(MTTR_RUN),--mttr-run '$(MTTR_RUN)') $(if $(PARTIAL),--partial)
 
 .PHONY: detect-test
 detect-test: tools $(AIOPS_PY) ## Detection layer on a running cluster: rules, the aiops account's reach, a recorded chunk

@@ -38,18 +38,23 @@ def score_variant(alerts: list[Alert], items: list[dict[str, Any]], graph: Servi
     chosen = select(alerts, detectors)
     incidents = correlate(chosen, graph)
     per_fault: dict[str, dict[str, list]] = {}
-    ttd, raw, after, n_faults = [], [], [], 0
+    ttd, raw, after, n_faults, rows = [], [], [], 0, []
     for item in (i for i in items if i["kind"] == FAULT):
         n_faults += 1
         s, e = _window(item)
         first = min((a.start for a in chosen if s <= a.start <= s + DETECT_WITHIN_S), default=None)
         entry = per_fault.setdefault(item["fault"], {"detected": [], "ttd": []})
         entry["detected"].append(first is not None)
+        row = {"seq": item.get("seq"), "fault": item["fault"], "detected": first is not None,
+               "ttd_s": None if first is None else first - s}
         if first is not None:
             ttd.append(first - s)
             entry["ttd"].append(first - s)
-            raw.append(sum(1 for a in chosen if s <= a.start <= e + NOISE_AFTER_S))
-            after.append(sum(1 for inc in incidents if s <= inc.opened <= e + NOISE_AFTER_S))
+            row["alerts"] = sum(1 for a in chosen if s <= a.start <= e + NOISE_AFTER_S)
+            row["incidents"] = sum(1 for inc in incidents if s <= inc.opened <= e + NOISE_AFTER_S)
+            raw.append(row["alerts"])
+            after.append(row["incidents"])
+        rows.append(row)
     quiet = {kind: [_window(i) for i in items if i["kind"] == kind] for kind in (FAULT_FREE, BENIGN)}
 
     def per_day(windows: list[tuple[float, float]]) -> float | None:
@@ -72,6 +77,10 @@ def score_variant(alerts: list[Alert], items: list[dict[str, Any]], graph: Servi
         "per_fault": {f: {"detected": sum(v["detected"]), "of": len(v["detected"]),
                           "mttd_s": statistics.median(v["ttd"]) if v["ttd"] else None}
                       for f, v in sorted(per_fault.items())},
+        # one row per fault, for the confidence intervals; it names faults, so it
+        # stays with the sealed labels like the triage rows
+        "rows": rows,
+        "quiet_hours": {k: sum(e - s for s, e in w) / 3600 for k, w in quiet.items()},
     }
 
 

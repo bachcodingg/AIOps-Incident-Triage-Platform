@@ -5,6 +5,8 @@
   harness score --run RUN --recording REC                   B0/B1/B2 detection on the tuning set
   harness triage --run RUN --recording REC --variant A1     triage and score RCA on the tuning set (week 8)
   harness mttr --run RUN --recording REC [--baseline-run R0 --baseline-recording REC0]   time to recover (week 9)
+  harness final --run RUN --recording REC [--budget 10]      week 10: every variant on the test set, once (gate G3)
+  harness results --run RUN [--mttr-run LIVE]               eval/results.md, results.json and the charts
 
 --run finds the sealed labels (~/.incidentlens/labels/RUN), the public seal
 (eval/seals/) and the lock; each can also be given as a path.
@@ -25,10 +27,14 @@ from detector.cli import resolve_model
 from detector.series import load
 from recorder.store import Recording, resolve
 
+from . import gate3
+from . import results as results_mod
 from .dataset import FreezeError, freeze, load_split, verify_lock
+from .figures import write_all
+from .final import DEFAULT_BUDGET_USD, FINAL_SEEDS, FINAL_VARIANTS, run_final
 from .score import markdown, score
 from .mttr import markdown as mttr_markdown, recover_times, summary as mttr_summary
-from .triage import markdown as triage_markdown, run_set, summary
+from .triage import BudgetExceeded, markdown as triage_markdown, run_set, summary
 
 SEALS = REPO_ROOT / "eval" / "seals"
 LOCKS = REPO_ROOT / "eval" / "dataset"
@@ -99,8 +105,9 @@ def cmd_score(args: argparse.Namespace) -> int:
     print(text)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
-    if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=1) + "\n", encoding="utf-8")
+    # The rows name faults: they stay next to the sealed labels, where `harness results` reads them.
+    out = Path(args.json) if args.json else split.parent / f"detect-{args.set}.json"
+    out.write_text(json.dumps(results, indent=1) + "\n", encoding="utf-8")
     return 0
 
 
@@ -150,6 +157,79 @@ def cmd_mttr(args: argparse.Namespace) -> int:
             print(f"  {name}: {r['fault']} on {r['target']}: {t}")
         results[name] = mttr_summary(rows)
     print(mttr_markdown(results))
+    out = DEFAULT_LABELS_DIR / args.run / "mttr.json"
+    out.write_text(json.dumps(results, indent=1) + "\n", encoding="utf-8")
+    print(f"saved for `make results MTTR_RUN={args.run}`: {out}")
+    return 0
+
+
+def cmd_final(args: argparse.Namespace) -> int:
+    labels = _labels(args)
+    run_id = args.run or labels.parent.name
+    try:
+        out = run_final(run=run_id, labels=labels, recording=resolve(args.recording),
+                        dataset_lock=LOCKS / f"{run_id}.lock.json", g3_lock=LOCKS / f"{run_id}.g3.json",
+                        runs_dir=RUNS / run_id / "test", seals=SEALS, split=Path(args.split) if args.split else None,
+                        model=resolve_model(args.model) if args.model else None,
+                        variants=tuple(args.variant), seeds=tuple(args.seeds), budget_usd=args.budget)
+    except BudgetExceeded as exc:
+        print(f"stopped: {exc}", file=sys.stderr)
+        return 3
+    print(triage_markdown(out["triage"], "test"))
+    print(f"model spend ${out['spent_usd']:.2f}. Gate G3: commit eval/dataset/{run_id}.g3.json and "
+          f"eval/runs/{run_id}/test/, then `make results RUN={run_id}`")
+    return 0
+
+
+def cmd_gate_check(args: argparse.Namespace) -> int:
+    from triage.run import load_config
+
+    locks = sorted(Path(args.locks).glob("*.g3.json")) if args.locks else sorted(LOCKS.glob("*.g3.json"))
+    if not locks:
+        print("no G3 lock yet: nothing is frozen")
+        return 0
+    failed = 0
+    for path in locks:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+        changed = gate3.check_frozen(lock, load_config())
+        for c in changed:
+            print(f"FAIL {path.name}: {c}", file=sys.stderr)
+        if not changed:
+            print(f"ok: {path.name}: detectors, triage, prompts, runbooks and scorers as frozen on {lock['opened_at']}")
+        failed += bool(changed)
+    if failed:
+        print("Results are frozen at gate G3 (docs/design.md section 14): a change to these files is a new "
+              "evaluation, not an edit.", file=sys.stderr)
+    return 1 if failed else 0
+
+
+def cmd_results(args: argparse.Namespace) -> int:
+    labels = _labels(args)
+    run_id = args.run or labels.parent.name
+    lock = None
+    if args.set == "test":
+        g3 = Path(args.g3_lock) if args.g3_lock else LOCKS / f"{run_id}.g3.json"
+        if not g3.exists():
+            raise FreezeError(f"{g3} does not exist: the test set has not been run (`make eval-final`)")
+        lock = json.loads(g3.read_text(encoding="utf-8"))
+        if not lock.get("completed_at") and not args.partial:
+            raise FreezeError("the final run has not completed (the budget, or a stop); finish it, or report "
+                              "what exists with --partial")
+        stale = gate3.check_runs(lock, Path(args.runs) if args.runs else RUNS / run_id / "test")
+        if stale:
+            raise FreezeError("runs that are not the frozen system:\n  " + "\n  ".join(stale[:10]))
+    mttr = DEFAULT_LABELS_DIR / args.mttr_run / "mttr.json" if args.mttr_run else None
+    report = results_mod.build(labels.parent, args.set, run=run_id, lock=lock, mttr=mttr)
+    out = Path(args.out) if args.out else (REPO_ROOT / "eval" / "results.md" if args.set == "test"
+                                           else labels.parent / "results-tuning.md")
+    figures = write_all(out.parent / "figures", report)
+    out.write_text(results_mod.markdown(report), encoding="utf-8")
+    out.with_suffix(".json").write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"wrote {out}, {out.with_suffix('.json').name} and {len(figures)} charts in {out.parent / 'figures'}")
+    if args.set == "test" and not args.out and results_mod.update_readme(REPO_ROOT / "README.md", report):
+        print("README.md results table updated")
+    for t in report["targets"]:
+        print(f"  {t['metric']:<32} {t['target']:<8} {t['status']}")
     return 0
 
 
@@ -207,6 +287,30 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--baseline-run", help="the same faults without the loop")
     s.add_argument("--baseline-recording")
     s.set_defaults(func=cmd_mttr)
+
+    s = sub.add_parser("final", help="week 10: every detector and variant on the locked test set, once (gate G3)")
+    common(s)
+    s.add_argument("--recording", required=True, help="the frozen recording, after `make detect`")
+    s.add_argument("--model", help="the trained Isolation Forest, checked against the G2 lock")
+    s.add_argument("--variant", nargs="+", default=list(FINAL_VARIANTS))
+    s.add_argument("--seeds", type=int, nargs="+", default=list(FINAL_SEEDS))
+    s.add_argument("--budget", type=float, default=DEFAULT_BUDGET_USD,
+                   help="hard cap in USD on model spend over the whole evaluation, resumed runs included")
+    s.set_defaults(func=cmd_final)
+
+    s = sub.add_parser("gate-check", help="CI: has anything a G3 lock froze changed since?")
+    s.add_argument("--locks", help="directory of *.g3.json (default: eval/dataset)")
+    s.set_defaults(func=cmd_gate_check)
+
+    s = sub.add_parser("results", help="eval/results.md, results.json and the charts, from the final scores")
+    common(s)
+    s.add_argument("--set", choices=["tuning", "test"], default="test")
+    s.add_argument("--mttr-run", help="a live-test run already measured with `harness mttr`")
+    s.add_argument("--partial", action="store_true", help="report a final run the budget stopped")
+    s.add_argument("--g3-lock", help="default: eval/dataset/<run>.g3.json")
+    s.add_argument("--runs", help="default: eval/runs/<run>/test")
+    s.add_argument("--out", help="default: eval/results.md (test), next to the labels (tuning)")
+    s.set_defaults(func=cmd_results)
     return p
 
 
@@ -214,6 +318,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (FreezeError, SealError, FileNotFoundError) as exc:
+    except (FreezeError, SealError, FileNotFoundError, results_mod.ResultsError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
