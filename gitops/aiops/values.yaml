@@ -1,11 +1,4 @@
-# The `aiops` service account is the only identity the AIOps layer uses: the
-# telemetry recorder (week 6) impersonates it, the triage agent's tools (week 8)
-# and the remediator (week 9, its own narrow write role) run as it.
-#
-# Read access is granted namespace by namespace, through RoleBindings, never a
-# ClusterRoleBinding. The `chaos` and `chaos-mesh` namespaces, and Chaos Mesh's
-# resources everywhere, are therefore out of reach by construction: that is half
-# of what keeps the ground truth sealed (chaos/README.md#sealed-ground-truth).
+
 serviceAccount: aiops
 
 # Where the workload runs, and what the agent may see there.
