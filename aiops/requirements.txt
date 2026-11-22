@@ -3,3 +3,5 @@ scikit-learn==1.8.0
 PyYAML==6.0.3
 pydantic==2.14.3
 anthropic==2.10.0
+fastapi==0.162.0
+uvicorn==0.54.0

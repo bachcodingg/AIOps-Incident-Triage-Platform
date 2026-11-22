@@ -1,7 +1,7 @@
 [project]
 name = "incidentlens-eval"
 version = "0.1.0"
-description = "Evaluation harness: dataset freeze (gate G2), detection scores, triage scores on the tuning set (week 8); final runs in week 10."
+description = "Evaluation harness: dataset freeze (gate G2), detection and triage scores, the final run on the test set and the results report (gate G3)."
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

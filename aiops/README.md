@@ -8,9 +8,11 @@ The AIOps loop. Started after gate G1 (platform observable, end of week 4).
 | [`detector/`](detector/) | 6 | reads back the static (B0) and burn-rate (B1) alerts, and adds anomaly detection: rolling median/MAD, Isolation Forest, missing telemetry |
 | [`correlator/`](correlator/) | 6 | groups alerts into incidents by time and the service graph |
 | [`triage/`](triage/) | 8 | LLM agent with read-only, typed tools, replay mode and strict JSON verdicts; the rule baseline (B2) in the same format |
-| `remediator/` | 9 | `rollback`, `restart`, `scale_out`, `none_escalate`, behind policy and approval |
+| [`remediator/`](remediator/) | 9 | `rollback`, `restart`, `scale_out` as the `aiops-remediator` account; the approval policy; the hash-chained audit log |
+| [`loop/`](loop/) | 9 | the live loop on a running cluster (detect, correlate, triage, decide, act) and the console's API |
+| [`console/`](console/) | 9 | the operator console (React): incidents, evidence, Grafana links, approve or reject, audit log |
 
-Design and reasoning: [docs/design.md](../docs/design.md) sections 6, 11 and 12.
+Design and reasoning: [docs/design.md](../docs/design.md) sections 6, 11, 12 and 13.
 
 ```bash
 make aiops-unit                                  # unit tests, no cluster
@@ -21,6 +23,10 @@ make detect RECORDING=<name> MODEL=baseline      # alerts.jsonl and incidents-{B
 make detect-test                                 # on a running cluster: rules, RBAC, one recorded chunk (CI)
 make triage-one RECORDING=<name> INCIDENT=inc-0007 VARIANT=B2   # replay one incident (B2 free, A1 calls Claude)
 make triage RUN=<run> RECORDING=<name> VARIANTS="B2 A1" LIMIT=3  # triage and score the tuning set
+make console-demo                                # the console over a made-up incident, no cluster
+make console [VARIANT=A1] [DRY_RUN=1]            # the live loop and console on a running cluster
+make remediate-test                              # the remediator's RBAC and patches, dry-run (CI)
+make live-test; make mttr RUN=... RECORDING=...  # time to recover with and without the loop
 ```
 
 Recordings and models live in `~/.incidentlens/`, never in this repository.
@@ -136,3 +142,41 @@ Claude needs `ANTHROPIC_API_KEY` or an `ant auth login` profile. Requests go
 through the API's server-side refusal fallback, and the run log names the model
 that answered each turn. `python -m triage prompt` prints the system prompt and
 the tool definitions without calling anything.
+
+## Remediation and the live loop
+
+`make console` runs the loop beside the cluster, as the recorder does, and
+serves the console on http://127.0.0.1:8090. Every 30 seconds it brings the
+last two hours of telemetry up to date (the recorder's queries, as `aiops`),
+runs the detectors and the correlator, and triages each new incident two
+minutes after it opened, with the same code as replay. Then:
+
+| Verdict | Policy ([`policy.py`](remediator/policy.py)) | What happens |
+|---|---|---|
+| rollback of a service with a canary in progress | auto | the canary is aborted at once: users go back to the stable version |
+| any other rollback, restart, scale_out | approval | the console shows the plan and the exact `kubectl` commands; one click runs it |
+| none_escalate, none_verify, no valid verdict | notify | nothing runs; the incident is marked escalated |
+| the same action on the same target in the last 30 min, or 3 actions in an hour | refused | escalated: repeating a fix that did not work makes things worse |
+
+An approved action is planned again before it runs. If the cluster moved in
+the meantime (someone reverted the release by hand, say), it is not run.
+
+| Action | As `aiops-remediator` ([`actions.py`](remediator/actions.py)) |
+|---|---|
+| rollback | canary in progress: `status.abort` on the Rollout. Otherwise the service's ArgoCD Application goes back to its previous release's Helm parameters; a release that came from Git is refused, it needs a revert commit |
+| restart | a service: the Rollout's `restartAt`. redis: the Deployment's restart annotation. postgres: CloudNativePG's restart annotation |
+| scale_out | the HPA's `minReplicas` one up, to at most `maxReplicas`; ArgoCD ignores that field, so self-heal leaves it |
+
+The account's rights are in [gitops/aiops/templates/remediator.yaml](../gitops/aiops/templates/remediator.yaml):
+`get` and `patch` on named objects only, nothing else. `make remediate-test`
+checks them on a live cluster and sends the plans with `--dry-run=server`.
+
+Everything that happens goes into a hash-chained audit log
+(`~/.incidentlens/live/state.db`): incident opened, verdict, decision,
+approval or rejection with the name typed in the console, each command and its
+result, recovery with the time it took. The console shows whether the chain is
+intact. It listens on 127.0.0.1 only and has no login; the name on an approval
+is recorded, not verified.
+
+`npm run dev` in [`console/`](console/) serves the console with hot reload on
+:5173 against a running `make console`.

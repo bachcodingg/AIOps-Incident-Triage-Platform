@@ -24,3 +24,12 @@ proxies:
 
 # Deploy history (ArgoCD Applications) for the agent's argocd_history tool.
 argocdNamespace: argocd
+
+# The remediator (week 9): its own account, write access to named objects only
+# (templates/remediator.yaml). The live loop impersonates it to run an action
+# after the policy or a human allowed it.
+remediator:
+  serviceAccount: aiops-remediator
+  rollouts: [gateway, search-api, catalog, indexer]   # also their Applications and HPAs
+  deployments: [redis]
+  postgresClusters: [postgres]

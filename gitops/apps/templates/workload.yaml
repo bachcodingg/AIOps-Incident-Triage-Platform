@@ -26,12 +26,24 @@ spec:
       releaseName: {{ $name }}
       valuesObject:
         {{- toYaml $values | nindent 8 }}
+  {{- if $app.image }}
+  # A scale-out by the remediator (week 9) raises the HPA's minReplicas. Without
+  # this, self-heal would put Git's value back within seconds. Git's value
+  # returns with the next change to the chart, or when a human syncs.
+  ignoreDifferences:
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers: [/spec/minReplicas]
+  {{- end }}
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      {{- if $app.image }}
+      - RespectIgnoreDifferences=true
+      {{- end }}
     retry:
       limit: 5
       backoff: {duration: 10s, factor: 2, maxDuration: 3m}

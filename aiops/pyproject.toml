@@ -1,12 +1,12 @@
 [project]
 name = "incidentlens-aiops"
 version = "0.1.0"
-description = "The AIOps loop: telemetry recorder, detectors and correlator (week 6), triage agent and rule baseline (week 8); remediator later."
+description = "The AIOps loop: telemetry recorder, detectors and correlator (week 6), triage agent and rule baseline (week 8), remediator and live loop (week 9)."
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.2", "scikit-learn>=1.6", "PyYAML>=6", "pydantic>=2.10", "anthropic>=2.0"]
+dependencies = ["numpy>=2.2", "scikit-learn>=1.6", "PyYAML>=6", "pydantic>=2.10", "anthropic>=2.0", "fastapi>=0.160", "uvicorn>=0.50"]
 
 [tool.setuptools]
-packages = ["recorder", "detector", "correlator", "triage"]
+packages = ["recorder", "detector", "correlator", "triage", "remediator", "loop"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -240,9 +240,10 @@ $(AIOPS_PY): aiops/requirements.txt aiops/requirements-dev.txt chaos/runner/requ
 	@touch $@
 
 .PHONY: aiops-unit
-aiops-unit: $(AIOPS_PY) ## Unit test the recorder, detectors, correlator, triage agent and harness (no cluster, no model)
+aiops-unit: $(AIOPS_PY) ## Unit test recorder, detectors, correlator, triage, remediator, loop and harness (no cluster, no model)
 	cd aiops && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 	cd eval && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
+	$(AIOPS) harness gate-check
 
 .PHONY: record
 record: tools $(AIOPS_PY) ## Record telemetry as the aiops account: make record NAME=baseline [HOURS=72]
@@ -300,6 +301,71 @@ dataset-freeze: $(AIOPS_PY) ## Gate G2: split tuning/test, hash-lock the test se
 dataset-verify: $(AIOPS_PY) ## Check labels, recording and split against the committed lock
 	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make dataset-verify RUN=<run id> RECORDING=<name> [MODEL=<name>]"; exit 1; }
 	$(AIOPS) harness verify --run '$(RUN)' --recording '$(RECORDING)' $(if $(MODEL),--model '$(MODEL)')
+
+# --- week 9: remediation, the live loop and its console -------------------------
+# The loop reads as `aiops` and acts as `aiops-remediator`, by impersonation from
+# your kubeconfig. VARIANT=B2 is free; A1 calls Claude. DRY_RUN=1 sends every
+# change with --dry-run=server. State and audit log: ~/.incidentlens/live/.
+CONSOLE_DIR := aiops/console
+
+.PHONY: console-build
+console-build: ## Build the operator console (aiops/console -> dist/)
+	cd $(CONSOLE_DIR) && npm ci --no-fund --no-audit && npm run build
+
+.PHONY: console
+console: tools $(AIOPS_PY) ## Live loop + console on http://127.0.0.1:8090: make console [VARIANT=B2|A1] [DRY_RUN=1]
+	@test -f $(CONSOLE_DIR)/dist/index.html || $(MAKE) --no-print-directory console-build
+	$(AIOPS) loop serve --context kind-$(CLUSTER) --kubectl $(KUBECTL) --variant $(or $(VARIANT),B2) \
+	  --grafana http://localhost:$(GRAFANA_PORT) $(if $(DRY_RUN),--dry-run) $(if $(MODEL),--model '$(MODEL)') \
+	  $(if $(RECORD_DIR),--record-dir '$(RECORD_DIR)')
+
+.PHONY: console-demo
+console-demo: $(AIOPS_PY) ## The console over a made-up incident, no cluster: http://127.0.0.1:8090
+	@test -f $(CONSOLE_DIR)/dist/index.html || $(MAKE) --no-print-directory console-build
+	@mkdir -p .bin
+	$(AIOPS) loop demo --db .bin/console-demo.db
+	$(AIOPS) loop serve --no-loop --db .bin/console-demo.db
+
+.PHONY: remediate-test
+remediate-test: tools $(AIOPS_PY) ## Remediator on a running cluster: its RBAC, and its patches dry-run against the API server
+	CONTEXT="kind-$(CLUSTER)" KUBECTL=$(KUBECTL) AIOPS_PY="$(AIOPS_PY)" PATHSEP="$(PATHSEP)" scripts/remediate-test.sh
+
+# The live test (week 9): a short chaos run with the recorder alongside. Run it
+# once with `make console` going in another terminal (approve what it proposes),
+# once without, then compare with `make mttr`.
+LIVE_FAULTS ?= F01,F02,F03,F11,F12
+.PHONY: live-test
+live-test: tools $(AIOPS_PY) $(CHAOS_PY) ## Chaos run of LIVE_FAULTS x REPEATS (default 2) with the recorder alongside
+	@name=live-$$(date -u +%Y%m%dT%H%M%SZ); mkdir -p .bin; \
+	$(AIOPS) recorder record $(AIOPS_KUBE) --name "$$name" --from now-65m > ".bin/$$name.log" 2>&1 & rec=$$!; \
+	trap 'kill $$rec 2>/dev/null || true' EXIT; \
+	echo "recording $$name alongside the run (log: .bin/$$name.log)"; \
+	$(CHAOS) run --faults $(LIVE_FAULTS) --repeats $(or $(REPEATS),2) --fault-free 0 --benign 0 --seal-out ".bin/$$name.seal.json"; \
+	echo "run over; recording 25 more minutes of recovery"; sleep 1500; \
+	echo "done. Next: make detect RECORDING=$$name, then make mttr RUN=<run id above> RECORDING=$$name [BASELINE_RUN=... BASELINE_RECORDING=...]"
+
+.PHONY: mttr
+mttr: $(AIOPS_PY) ## Time to recover of a live-test run against one without the loop: make mttr RUN=... RECORDING=... [BASELINE_RUN=...]
+	@test -n "$(RUN)" && test -n "$(RECORDING)" || { echo "usage: make mttr RUN=<run id> RECORDING=<name> [BASELINE_RUN=... BASELINE_RECORDING=...]"; exit 1; }
+	$(AIOPS) harness mttr --run '$(RUN)' --recording '$(RECORDING)' \
+	  $(if $(BASELINE_RUN),--baseline-run '$(BASELINE_RUN)' --baseline-recording '$(BASELINE_RECORDING)')
+
+# --- week 10: evaluation runs (gate G3) -----------------------------------------
+# Once: every detector and every variant on the locked test set, 3 seeds, under
+# one spending cap (BUDGET, USD, default 10). The detectors run again first, on
+# the frozen config. A stopped run resumes only while nothing that decides a
+# verdict has changed (eval/dataset/<run>.g3.json says what did).
+.PHONY: eval-final
+eval-final: $(AIOPS_PY) ## Gate G3, once: make eval-final RUN=... RECORDING=... MODEL=... [BUDGET=10] [VARIANTS="B2 A1 A4 A2 A3"]
+	@test -n "$(RUN)" && test -n "$(RECORDING)" && test -n "$(MODEL)" || { echo "usage: make eval-final RUN=<run id> RECORDING=<name> MODEL=<baseline model> [BUDGET=10]"; exit 1; }
+	$(MAKE) --no-print-directory detect RECORDING='$(RECORDING)' MODEL='$(MODEL)'
+	$(AIOPS) harness final --run '$(RUN)' --recording '$(RECORDING)' --model '$(MODEL)' \
+	  $(if $(BUDGET),--budget $(BUDGET)) $(if $(VARIANTS),--variant $(VARIANTS))
+
+.PHONY: results
+results: $(AIOPS_PY) ## eval/results.md, results.json, charts and the README table: make results RUN=... [MTTR_RUN=live-run] [SET=tuning]
+	@test -n "$(RUN)" || { echo "usage: make results RUN=<run id> [MTTR_RUN=<live-test run>] [SET=tuning] [PARTIAL=1]"; exit 1; }
+	$(AIOPS) harness results --run '$(RUN)' $(if $(SET),--set $(SET)) $(if $(MTTR_RUN),--mttr-run '$(MTTR_RUN)') $(if $(PARTIAL),--partial)
 
 .PHONY: detect-test
 detect-test: tools $(AIOPS_PY) ## Detection layer on a running cluster: rules, the aiops account's reach, a recorded chunk

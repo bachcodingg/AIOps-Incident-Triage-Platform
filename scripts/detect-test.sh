@@ -85,7 +85,25 @@ for backend in "kube-prometheus-stack-prometheus:9090 /api/v1/query?query=up" "l
 done
 
 echo "recorder"
-py -m recorder record --context "$CONTEXT" --kubectl "$KUBECTL" --out "$work/rec" --from now-11m --to now-6m >/dev/null
+# The chunk must fall where the gateway was already serving k6's traffic. A
+# window fixed against `now` assumes how long `make up` took: on a fast runner
+# it lands before the first request. So wait (as the aiops account) until the
+# gateway's request rate has existed at every 30 s step of the last 8 minutes,
+# then record the closed 5-minute window inside them.
+gateway_minutes() {
+  local q
+  q=$(py -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))' \
+    'count_over_time(sum(rate(http_server_request_duration_seconds_count{job="shopsearch/gateway"}[1m]))[8m:30s])')
+  k --as="$AS" get --raw "/api/v1/namespaces/monitoring/services/http:kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=$q" \
+    | py -c 'import json, sys; r = json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)'
+}
+deadline=$((SECONDS + 600))
+until (( $(gateway_minutes 2>/dev/null || echo 0) >= 16 )); do
+  ((SECONDS < deadline)) || fail "the gateway served traffic for 8 minutes before the recording window"
+  sleep 15
+done
+pass "the gateway has served traffic for 8 minutes"
+py -m recorder record --context "$CONTEXT" --kubectl "$KUBECTL" --out "$work/rec" --from now-7m --to now-2m >/dev/null
 py - "$work/rec" <<'PY' || fail "a recorded chunk has every section"
 import sys
 from recorder.store import Recording

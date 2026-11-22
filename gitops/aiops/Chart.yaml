@@ -1,5 +1,5 @@
 apiVersion: v2
 name: aiops
-description: The AIOps layer's identity in the cluster, read-only and blind to the chaos namespace.
+description: The AIOps layer's identities in the cluster - a read-only one blind to the chaos namespace, and the remediator's narrow write role.
 type: application
 version: 0.1.0
