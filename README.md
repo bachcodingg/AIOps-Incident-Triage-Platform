@@ -8,9 +8,11 @@ agent that is measured against plain threshold alerts and a rule-based baseline.
 
 ## Results
 
+<!-- results:start -->
 Not measured yet. The evaluation runs in week 10 on a locked test set of 40+
 injected incidents; the plan and targets are fixed in advance in
-[docs/design.md](docs/design.md#6-evaluation-plan).
+[docs/design.md](docs/design.md#6-evaluation-plan). `make results` replaces
+this block.
 
 | Variant | Detection recall | MTTD | RCA top-1 | Action accuracy | Cost / incident |
 |---|---|---|---|---|---|
@@ -18,6 +20,7 @@ injected incidents; the plan and targets are fixed in advance in
 | B1 SLO burn-rate alerts | – | – | – | – | – |
 | B2 burn-rate + anomaly + rule RCA | – | – | – | – | – |
 | A1 burn-rate + anomaly + LLM agent | – | – | – | – | – |
+<!-- results:end -->
 
 ## Architecture
 
@@ -95,7 +98,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [ ] **Week 6 — Detection and correlation (gate G2):** static-threshold rules with promtool tests, burn-rate alerts labelled as a detector, anomaly detection (rolling MAD, Isolation Forest, missing telemetry), a correlator over the static and Tempo service graphs, a recorder that reads as a read-only account blind to the chaos namespace, and a freeze that hash-locks the test set. The code is done and tested; gate G2 waits for the recording itself, about 6 days of laptop time ([steps](docs/design.md#11-detection-and-correlation-week-6))
 - [ ] **Week 8 — Triage agent:** an LLM agent with 8 read-only, typed tools and hard limits per incident, replaying recorded incidents with nothing visible after triage time; strict JSON verdicts (retry once, then escalate); the rule baseline in the same format; A1 to A4 variants and the tuning-set scorer. Code done and tested on synthetic recordings with a scripted model; tuning waits for the gate G2 dataset ([design](docs/design.md#12-triage-agent-week-8))
 - [ ] **Week 9 — Remediation and console:** a live loop on the cluster (detect, correlate, triage, decide), a remediator with its own narrow RBAC (rollback through Argo Rollouts or ArgoCD, restart, scale out), automatic only for a canary in progress and one approval for the rest, a React console with evidence, Grafana links and a hash-chained audit log, and `make mttr` for the live test. Code done and tested; the 10-incident live test and the video need a running cluster ([design](docs/design.md#13-remediation-and-the-console-week-9))
-- [ ] Week 10 — Evaluation runs (**gate G3**)
+- [ ] **Week 10 — Evaluation runs (gate G3):** `make eval-final` runs every detector and triage variant on the locked test set once, 3 seeds, under one spending cap, after writing a G3 lock with the hash of every prompt, model, detector and scorer (a resumed run refuses a changed system, and CI fails a change to a frozen file); `make results` writes eval/results.md, the charts and this README's table: targets met or missed, bootstrap CIs over incidents, McNemar A1 vs B2, ablations, confusion by fault type. Code done and tested on synthetic data; the run waits for the gate G2 dataset ([design](docs/design.md#14-evaluation-runs-week-10))
 - [ ] Week 11 — Write-up
 
 ## Cost

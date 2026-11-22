@@ -396,6 +396,7 @@ Known gaps after week 8:
 - `unsafe` is judged by a rule in the harness (a write action where the label
   says escalate, or on a component the root cause does not name). Week 9 has to
   decide whether that is the right definition before week 10 counts it.
+  Settled in week 10, unchanged (section 14).
 - Only 3 full traces per 5-minute chunk are recorded, so `get_traces` often
   shows a summary without spans.
 - The rule baseline's thresholds are checked on synthetic data only, like the
@@ -457,7 +458,67 @@ Known gaps after week 9:
   anomaly alert recomputed over a sliding window can occasionally open a
   second incident.
 
-## 14. Risks
+## 14. Evaluation runs (week 10)
+
+Gate G3: the locked test set is opened once, by a system that does not change
+afterwards, and whatever it scores is reported. Operating details:
+[eval/README.md](../eval/README.md#week-10-the-final-run-gate-g3).
+
+```mermaid
+flowchart LR
+  g2[G2 lock<br/>dataset intact?] --> open[G3 lock written<br/>hashes of code, prompts, models]
+  open --> det[detection<br/>B0 B1 B2]
+  open --> tri[triage B2 A1 A4 A2 A3<br/>x 3 seeds, one spending cap]
+  det & tri --> scores[(scores<br/>next to the labels)]
+  tri --> runs[(eval/runs/run/test<br/>in Git)]
+  scores --> res[make results] --> md[eval/results.md<br/>results.json, charts, README table]
+  open -.-> ci[CI gate-check<br/>frozen files unchanged]
+```
+
+| Decision | Why |
+|---|---|
+| The G3 lock is written before the first test incident is triaged, not after the last | "results frozen" has to mean the system that saw the test set, including a run that stops halfway. A resumed run checks every hash and names the file that moved |
+| Frozen: detectors, correlator, triage code and config, runbooks, scorers; every variant's system prompt and model; the detectors' output on the recording | everything that decides a verdict or a score. Reporting code (results, charts, statistics) stays editable: a chart can be fixed after G3, a number cannot |
+| CI runs `harness gate-check` on every pull request once a G3 lock is committed | it needs no data, only hashes, so a change to a frozen file after G3 fails in review instead of slipping into a "re-run" |
+| One spending cap for the whole final run (default $10), counting runs already on disk | the low-cost plan has EUR 5 to 10 for the final runs; resuming cannot spend the cap twice. Each run still has its own $0.50 cap |
+| Variant order B2, A1, A4, A2, A3 | the free baseline and the main comparison first: if the cap stops the run, A1 against B2 is complete, which is what the plan's scope cuts keep |
+| 3 seeds for B2 too | it is deterministic, so this costs nothing and shows it; McNemar pairs the same incidents either way |
+| Bootstrap over incidents, not runs (10,000 resamples, fixed seed) | the three seeds of one incident share it; resampling runs would treat them as independent and make the intervals too narrow |
+| McNemar's exact test on majority votes over seeds, plus one test per seed | with about 40 incidents the discordant count is small, where the chi-squared approximation is poor; the per-seed tests show whether the verdict depends on the vote |
+| Ablations as paired differences against A1 | the same incidents on both sides; the question is what traces, runbooks and a big model are worth, not each variant's own score |
+| A target counts as met on the point estimate, and the report says when the CI spans it | targets were fixed before the run as single numbers; the interval tells whether the data can decide |
+| `unsafe` keeps week 8's rule, settled before the test set was opened: a write on a component the root cause does not name, or any write when the label says escalate or verify | during a network, DNS, disk or node fault a restart or rollout makes pods start inside the fault. A harmless wrong write on the right component (restart instead of rollback) is a wrong action, not an unsafe one. In the live loop every such write would still wait for one approval |
+| Only aggregates go into Git (shares, counts per fault type, intervals); the rows pairing runs with labels stay next to the labels | after G3 the test labels cannot leak into tuning any more, but the per-incident pairing is not needed to check a number: `make results` recomputes everything from the runs and the sealed scores |
+| Charts as plain SVG from the harness, no plotting library | GitHub shows them inline; the numbers are in tables next to each chart; one fewer dependency in the frozen environment |
+
+**Week 10, done when** the test set has been run once and `make results` has
+written eval/results.md. The code is done and tested on synthetic scores and a
+synthetic recording (`make aiops-unit`): the G3 lock, refusing a changed system,
+the spending cap, the statistics, the report and the charts. The run itself
+waits for gate G2's dataset, like weeks 8 and 9.
+
+Steps, once the dataset is frozen and tuning is over:
+
+1. Check the prices in `aiops/triage/config.yaml`, set a hard spending limit in
+   the provider console, and decide which model A2 and A3 run on (section 7:
+   on the low-cost path they can run on the local model).
+2. `make eval-final RUN=<run> RECORDING=<recording> MODEL=baseline [BUDGET=10]`.
+3. Commit `eval/dataset/<run>.g3.json` and `eval/runs/<run>/test/`: gate G3.
+4. `make results RUN=<run> [MTTR_RUN=<live-test run>]`, and commit
+   eval/results.md, results.json, eval/figures/ and the README table.
+
+Known gaps after week 10:
+
+- Nothing measured: no dataset yet, so no numbers.
+- The plan's 10-incident re-check on EKS (low-cost path, section 7) needs a
+  credit-funded AWS session; it is not part of `make eval-final`.
+- False alarms per 24 h have no interval: about 20 fault-free windows are too
+  few for a bootstrap to mean much.
+- The G3 lock cannot stop someone deleting it and starting again. Git history
+  and the prompt hash inside every committed run make that visible, not
+  impossible.
+
+## 15. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -467,7 +528,7 @@ Known gaps after week 9:
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 15. Open questions
+## 16. Open questions
 
 - Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM? `qwen3:8b`
   is the first candidate (week 8, `aiops/triage/config.yaml`); the tuning set decides.

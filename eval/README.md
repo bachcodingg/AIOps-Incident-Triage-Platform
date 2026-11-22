@@ -5,14 +5,15 @@ Evaluation harness and results. Rules (from [docs/design.md](../docs/design.md#6
 - tune on the tuning set, report on the locked test set only; the test set hash is committed before week 8 (gate G2)
 - 3 seeds per variant, bootstrap 95% CIs, McNemar's test for A1 vs B2
 - every agent run stored as JSON in `runs/`
-- `make results` writes `results.md` and the charts (week 10)
+- `make results` writes `results.md` and the charts (week 10, gate G3)
 
 | Path | What |
 |---|---|
-| [`harness/`](harness/) | `freeze` and `verify` the dataset; `score` the detectors on the tuning set |
+| [`harness/`](harness/) | `freeze` and `verify` the dataset; `score` and `triage` the tuning set; `final` on the test set once; `results` |
 | `seals/` | the public seal of each dataset run: run id, record count, head hash of the sealed labels (written by `make chaos-run`) |
-| `dataset/` | the lock of each frozen dataset: hashes of the labels, the recording, the tuning set, the test set and the model |
+| `dataset/` | the G2 lock of each frozen dataset (hashes of the labels, the recording, both sets, the model), and its G3 lock once the test set is run (hashes of everything that decides a verdict) |
 | [`runs/`](runs/) | every triage run as JSON: prompt, tool calls, answer, cost (no labels) |
+| `results.md`, `results.json`, `figures/` | written by `make results` after the final run; aggregates only |
 
 ## Gate G2: freezing the dataset
 
@@ -64,5 +65,43 @@ first three faults only: start there with A1, it costs money. `MODEL=qwen3:8b`
 runs any variant on the local model for free.
 
 The test set is refused without `--final` (week 10, gate G3).
+
+## Week 10: the final run (gate G3)
+
+`make eval-final RUN=<run> RECORDING=<name> MODEL=baseline [BUDGET=10]` runs
+the detectors again on their frozen config, then `harness final`:
+
+1. checks the dataset against its G2 lock; any difference stops it
+2. writes `dataset/<run>.g3.json`: hashes of the detectors, correlator, triage
+   code and config, runbooks and scorers, every variant's system prompt and
+   model, the detectors' output, the variants and the seeds. If the lock is
+   already there (a resumed run), every hash must still match, and the error
+   names the file that moved
+3. scores B0, B1 and B2 detection on the test set
+4. triages every test incident with B2, A1, A4, A2 and A3 (that order: free
+   and main first), seeds 0, 1 and 2, under one cap on model spend for the
+   whole evaluation. Runs already on disk count against the cap and are not
+   paid again; when the cap is reached it stops with exit code 3, and
+   `BUDGET=<more>` resumes
+5. marks the lock completed, with the hashes of the score files
+
+Commit the G3 lock and `runs/<run>/test/`: that is gate G3. From then on, CI's
+`harness gate-check` (part of `make aiops-unit`) fails any change to a frozen
+file. Reporting code (`results.py`, `figures.py`, `stats.py`) is not frozen.
+
+`make results RUN=<run> [MTTR_RUN=<live run>]` then writes, from the scores
+next to the labels and nothing else:
+
+| Output | What |
+|---|---|
+| `results.md` | every metric against its target (met, missed, or the CI spans it); detection and triage tables with 95% bootstrap CIs over incidents; McNemar's exact test A1 vs B2 (majority over seeds, and per seed); ablations as paired differences against A1; confusion by fault type for A1 and B2 (category and action); the fault types A1 got wrong; the live-test MTTR; the frozen prompts and models |
+| `results.json` | the same numbers, for the write-up |
+| `figures/*.svg` | detection recall and MTTD, triage scores, ablations, confusion heat maps |
+| `../README.md` | the results table between the `results:start` and `results:end` markers |
+
+It refuses runs whose prompt or model is not the frozen one, and a final run
+that has not completed (unless `PARTIAL=1`, for a run the cap stopped).
+`SET=tuning` writes the same report for the tuning set, next to the labels
+instead of into `eval/`: it guided tuning and is not a result.
 
 Nothing is measured yet: the dataset is recorded first (docs/design.md section 11).
