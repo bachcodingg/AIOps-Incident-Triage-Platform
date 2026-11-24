@@ -9,8 +9,9 @@ agent that is measured against plain threshold alerts and a rule-based baseline.
 ## Results
 
 <!-- results:start -->
-Not measured yet. The evaluation runs in week 10 on a locked test set of 40+
-injected incidents; the plan and targets are fixed in advance in
+Not measured yet. The evaluation runs once, on a locked test set of 40+
+injected incidents, after the dataset is recorded (gate G2); the plan and
+targets are fixed in advance in
 [docs/design.md](docs/design.md#6-evaluation-plan). `make results` replaces
 this block.
 
@@ -22,25 +23,46 @@ this block.
 | A1 burn-rate + anomaly + LLM agent | – | – | – | – | – |
 <!-- results:end -->
 
+On <!-- n:faults -->–<!-- /n --> held-out incidents, the agent (A1) named the
+root cause in <!-- n:triage.A1.top1 -->–<!-- /n --> of them against
+<!-- n:triage.B2.top1 -->–<!-- /n --> for the rule baseline (B2; McNemar
+p = <!-- n:mcnemar.p -->–<!-- /n -->), with
+<!-- n:triage.A1.unsafe -->–<!-- /n --> unsafe actions at
+<!-- n:triage.A1.cost -->–<!-- /n --> per incident. With one approval per fix,
+median time to recover changed by <!-- n:mttr.change -->–<!-- /n --> in the
+live test. "–" means not measured yet; every number in this README and the
+blog post is filled from [eval/results.json](eval/results.json), and CI checks
+that they match.
+
+**Demo (3 min):** not recorded yet. The shot list is in [docs/demo.md](docs/demo.md).
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-  user([client]) -->|:8080| gw[gateway<br/>TS / Fastify]
-  gw --> sa[search-api<br/>Python / FastAPI]
-  gw --> cat[catalog<br/>Java / Quarkus]
-  sa -->|index + cache| redis[(Redis)]
-  cat --> pg[(PostgreSQL)]
-  cat -->|catalog:changes| redis
-  redis -->|BRPOP| idx[indexer<br/>Python worker]
-  idx -->|search:docs| redis
-  idx -.->|full reindex| cat
+  subgraph cluster["Kubernetes: kind, or EKS / OCI from Terraform; deployed only by ArgoCD"]
+    direction TB
+    gw[gateway] --> sa[search-api] & cat[catalog]
+    sa --> redis[(Redis)]
+    cat --> pg[(PostgreSQL)]
+    idx[indexer] --> redis
+    chaos[Chaos Mesh,<br/>bad releases] -.->|faults| gw & cat & redis
+  end
+  cluster -->|OpenTelemetry| obs[Prometheus · Loki · Tempo<br/>Sloth burn-rate alerts]
+  obs -->|read-only account| loop[detectors → correlator<br/>→ triage agent or rule]
+  loop --> console[console<br/>one approval]
+  console --> rem[remediator<br/>narrow RBAC] -->|rollback, restart,<br/>scale out| cluster
+  runner[chaos-runner] --> chaos
+  runner -->|sealed labels| eval[eval harness<br/>locked test set]
+  obs -->|recordings| eval
 ```
 
-Five layers: workload (above), platform (Terraform, ArgoCD), observability
-(OpenTelemetry, Prometheus, Loki, Tempo, Sloth SLOs), chaos (Chaos Mesh,
-sealed ground truth) and the AIOps loop (detectors, correlator, triage agent,
-gated remediator). Details: [docs/design.md](docs/design.md).
+The workload is ShopSearch: four services in TypeScript, Python and Java over
+PostgreSQL and Redis. Around it are the platform (Terraform, ArgoCD, Argo
+Rollouts canaries, Kyverno), observability (OpenTelemetry, Prometheus, Loki,
+Tempo, Sloth SLOs), chaos (14 fault types, ground truth sealed where the AIOps
+layer cannot read it) and the AIOps loop. Request paths, dependencies and
+every decision: [docs/design.md](docs/design.md).
 
 ## Quickstart (kind, free)
 
@@ -58,6 +80,7 @@ make obs-test    # a request followed from the gateway to its database span
 make chaos-test FAULT=F12   # break it on purpose: one fault, its symptom, recovery
 make detect-test # detectors and the read-only aiops account on the live cluster
 make remediate-test # the remediator's rights, and its patches dry-run
+make demo-fault  # with `make console` running: the demo video's bad release
 make console     # live loop and operator console on http://127.0.0.1:8090
 make grafana     # Grafana on http://localhost:3000 and its admin password
 make down        # delete the cluster
@@ -76,6 +99,24 @@ proves nothing billable is left. See [infra/README.md](infra/README.md).
 On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 `make`).
 
+## Read more
+
+| | |
+|---|---|
+| [Design doc](docs/design.md) | goals, SLOs, the evaluation plan and targets fixed in advance, one section per week |
+| [Runbooks](docs/runbooks/) | one per fault type; the triage agent can read them (A3 is without) |
+| [Postmortems](docs/postmortems/) | blameless, for the live test's most interesting incidents |
+| [Results](eval/results.md) | every metric with 95% intervals, McNemar A1 vs B2, ablations, confusion by fault type |
+| [Blog post](docs/blog.md) | what worked, what failed, what it cost (draft until the results are in) |
+| [Evaluation harness](eval/README.md) | how the dataset was frozen, run and scored |
+
+## What did not work
+
+<!-- wrong:start -->
+Not measured yet. `make results` lists here the fault types the agent got
+wrong in at least half its runs on the test set.
+<!-- wrong:end -->
+
 ## Repository layout
 
 | Path | What |
@@ -85,8 +126,8 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 | [`gitops/`](gitops/) | Helm charts, ArgoCD app-of-apps, Argo Rollouts canaries, Kyverno policies, SLOs and dashboards |
 | [`chaos/`](chaos/) | fault catalog (F01–F14), Chaos Mesh experiments, and `chaos-runner`, which injects them and seals the ground truth |
 | [`aiops/`](aiops/) | telemetry recorder, detectors and correlator (week 6), triage agent and rule baseline (week 8), remediator, live loop and console (week 9) |
-| [`eval/`](eval/) | evaluation harness and results (weeks 6–10) |
-| [`docs/`](docs/) | design doc, [runbooks](docs/runbooks/) for every fault; postmortems later |
+| [`eval/`](eval/) | evaluation harness and results (weeks 6–10), and the write-up's numbers (week 11) |
+| [`docs/`](docs/) | design doc, [runbooks](docs/runbooks/), [postmortems](docs/postmortems/), the [blog post](docs/blog.md) and the [demo script](docs/demo.md) |
 
 ## Roadmap
 
@@ -99,7 +140,7 @@ On Windows, run it from Git Bash (`winget install ezwinports.make` provides
 - [ ] **Week 8 — Triage agent:** an LLM agent with 8 read-only, typed tools and hard limits per incident, replaying recorded incidents with nothing visible after triage time; strict JSON verdicts (retry once, then escalate); the rule baseline in the same format; A1 to A4 variants and the tuning-set scorer. Code done and tested on synthetic recordings with a scripted model; tuning waits for the gate G2 dataset ([design](docs/design.md#12-triage-agent-week-8))
 - [ ] **Week 9 — Remediation and console:** a live loop on the cluster (detect, correlate, triage, decide), a remediator with its own narrow RBAC (rollback through Argo Rollouts or ArgoCD, restart, scale out), automatic only for a canary in progress and one approval for the rest, a React console with evidence, Grafana links and a hash-chained audit log, and `make mttr` for the live test. Code done and tested; the 10-incident live test and the video need a running cluster ([design](docs/design.md#13-remediation-and-the-console-week-9))
 - [ ] **Week 10 — Evaluation runs (gate G3):** `make eval-final` runs every detector and triage variant on the locked test set once, 3 seeds, under one spending cap, after writing a G3 lock with the hash of every prompt, model, detector and scorer (a resumed run refuses a changed system, and CI fails a change to a frozen file); `make results` writes eval/results.md, the charts and this README's table: targets met or missed, bootstrap CIs over incidents, McNemar A1 vs B2, ablations, confusion by fault type. Code done and tested on synthetic data; the run waits for the gate G2 dataset ([design](docs/design.md#14-evaluation-runs-week-10))
-- [ ] Week 11 — Write-up
+- [ ] **Week 11 — Write-up:** this README in the plan's order (results, demo, architecture, quickstart, links, what did not work), a blog draft, the demo shot list and `make demo-fault`, `make postmortem` drafting blameless postmortems from a live test's audit log and labels, and `make writeup`, which fills every number in the README, the blog and the CV entry from eval/results.json, checked in CI. Waits for the numbers, like weeks 8 to 10; the video, the postmortems' analysis and publishing are by hand ([design](docs/design.md#15-write-up-week-11))
 
 ## Cost
 
