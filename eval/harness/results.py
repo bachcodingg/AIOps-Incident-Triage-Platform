@@ -40,6 +40,7 @@ TRIAGE = ("B2", "A1", "A2", "A3", "A4")
 ABLATIONS = {"A2": "A2 without traces", "A3": "A3 without runbooks", "A4": "A4 open-weight model"}
 MISSED, NO_ANSWER = "missed", "no answer"
 README_START, README_END = "<!-- results:start -->", "<!-- results:end -->"
+WRONG_START, WRONG_END = "<!-- wrong:start -->", "<!-- wrong:end -->"
 
 
 class ResultsError(ValueError):
@@ -648,5 +649,13 @@ def update_readme(path: Path, report: dict[str, Any]) -> bool:
     block = (f"{README_START}\nMeasured on the locked test set ({report['faults']} incidents, 3 seeds); "
              f"95% intervals, significance tests and the confusion matrix in [eval/results.md](eval/results.md).\n\n"
              f"{readme_table(report)}\n{README_END}")
-    path.write_text(pattern.sub(lambda _: block, text), encoding="utf-8")
+    text = pattern.sub(lambda _: block, text)
+    wrong = re.compile(re.escape(WRONG_START) + r".*?" + re.escape(WRONG_END), re.S)
+    if wrong.search(text):
+        v = next((x for x in ("A1", "B2") if x in report["confusion"]), "A1")
+        items = "\n".join(f"- {w}" for w in report["wrong"]) or f"- {v} got every fault type right in most runs."
+        body = (f"{WRONG_START}\nFault types {v} got wrong in at least half its runs on the test set "
+                f"([by fault type](eval/results.md#by-fault-type)):\n\n{items}\n{WRONG_END}")
+        text = wrong.sub(lambda _: body, text)
+    path.write_text(text, encoding="utf-8")
     return True
