@@ -9,7 +9,7 @@ Evaluation harness and results. Rules (from [docs/design.md](../docs/design.md#6
 
 | Path | What |
 |---|---|
-| [`harness/`](harness/) | `freeze` and `verify` the dataset; `score` and `triage` the tuning set; `final` on the test set once; `results` |
+| [`harness/`](harness/) | `freeze` and `verify` the dataset; `score` and `triage` the tuning set; `final` on the test set once; `results`; `writeup` and `postmortem` (week 11) |
 | `seals/` | the public seal of each dataset run: run id, record count, head hash of the sealed labels (written by `make chaos-run`) |
 | `dataset/` | the G2 lock of each frozen dataset (hashes of the labels, the recording, both sets, the model), and its G3 lock once the test set is run (hashes of everything that decides a verdict) |
 | [`runs/`](runs/) | every triage run as JSON: prompt, tool calls, answer, cost (no labels) |
@@ -97,7 +97,8 @@ next to the labels and nothing else:
 | `results.md` | every metric against its target (met, missed, or the CI spans it); detection and triage tables with 95% bootstrap CIs over incidents; McNemar's exact test A1 vs B2 (majority over seeds, and per seed); ablations as paired differences against A1; confusion by fault type for A1 and B2 (category and action); the fault types A1 got wrong; the live-test MTTR; the frozen prompts and models |
 | `results.json` | the same numbers, for the write-up |
 | `figures/*.svg` | detection recall and MTTD, triage scores, ablations, confusion heat maps |
-| `../README.md` | the results table between the `results:start` and `results:end` markers |
+| `../README.md` | the results table between the `results:start` and `results:end` markers, and the fault types A1 got wrong between `wrong:start` and `wrong:end` |
+| `../README.md`, `../docs/blog.md` | every `<!-- n:key -->` number span (see below) |
 
 It refuses runs whose prompt or model is not the frozen one, and a final run
 that has not completed (unless `PARTIAL=1`, for a run the cap stopped).
@@ -105,3 +106,28 @@ that has not completed (unless `PARTIAL=1`, for a run the cap stopped).
 instead of into `eval/`: it guided tuning and is not a result.
 
 Nothing is measured yet: the dataset is recorded first (docs/design.md section 11).
+
+## Week 11: the write-up's numbers and postmortem drafts
+
+**Numbers.** A number in the README or the blog post is written as a span
+that names its key, `<!-- n:triage.A1.top1 -->81%<!-- /n -->`. The keys are
+in [harness/writeup.py](harness/writeup.py): `faults`, `fault_types`, `seeds`,
+`spent`, `detect.<B0|B1|B2>.<recall|mttd|false_alarms|noise>`,
+`triage.<B2|A1..A4>.<top1|top3|top1_e2e|action|unsafe|cost|cost_total|latency>`,
+`mcnemar.<p|a1_only|b2_only>`, `ablation.<A2|A3|A4>.<top1|action>` and
+`mttr.<change|with|without|faults>`.
+
+- `make results` fills them; `make writeup` does it again by itself and prints
+  the CV entry with the same numbers.
+- `harness writeup --check` runs in `make aiops-unit`, so in CI. It fails on a
+  span that differs from `results.json` or names an unknown key. Before the
+  final run there is no `results.json`, and every span must read "–".
+- Only a test-set `results.json` is accepted.
+
+**Postmortems.** `make postmortem RUN=<live-test run>` lists the run's faults
+with their incidents, whether root cause and action were right, the time to
+recover, and what went wrong. `SEQ=<n>` writes a draft in
+`docs/postmortems/`. The timeline, detection, trigger, resolution, verdict,
+evidence and links are filled from the live store (`~/.incidentlens/live/state.db`)
+and the run's sealed labels; the parts a person writes are marked. See
+[docs/postmortems/README.md](../docs/postmortems/README.md).

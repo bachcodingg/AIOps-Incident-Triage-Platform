@@ -518,7 +518,68 @@ Known gaps after week 10:
   and the prompt hash inside every committed run make that visible, not
   impossible.
 
-## 15. Risks
+## 15. Write-up (week 11)
+
+The plan's last week: the README a recruiter reads in under a minute, a
+3-minute demo video, three postmortems in the Google SRE blameless format, a
+blog post about what worked, what failed and what it cost, and the CV entry.
+Most of it is writing, and the writing is the author's. What the repository
+adds is a guarantee that no number in that writing can come from anywhere but
+the final run, and drafts that start from recorded facts.
+
+```mermaid
+flowchart LR
+  res[eval/results.json<br/>make results] --> wu[make writeup]
+  wu --> readme[README.md<br/>numbers + what did not work]
+  wu --> blog[docs/blog.md]
+  wu --> cv[CV entry<br/>printed]
+  ci[CI: writeup --check] -.-> readme & blog
+  live[(live store<br/>audit log)] & lab[(live-test<br/>sealed labels)] --> pm[make postmortem] --> drafts[docs/postmortems/<br/>drafts, written up by hand]
+  demo[make demo-fault<br/>+ make console] --> video[demo video<br/>docs/demo.md]
+```
+
+| Decision | Why |
+|---|---|
+| A number in prose is a span naming its key in results.json (`<!-- n:triage.A1.top1 -->81%<!-- /n -->`), rewritten by `make writeup` and by `make results` | the plan's rule is that every claim links to a results file. A span cannot drift: CI (`harness writeup --check` in `make aiops-unit`) fails when it says something results.json does not, or names a key that does not exist |
+| Before the final run every span reads "–", and the check enforces that too | a draft can be written now without a placeholder number surviving into the published version |
+| The write-up quotes the test set only; a tuning-set report is refused | tuning numbers are optimistic by construction (the prompts were tuned on them) |
+| Postmortems come from live-test incidents, not the test set | they are the incidents with remediation, approvals and an audit log; the test set was triaged offline and nothing was fixed |
+| `make postmortem` writes the facts and leaves the analysis blank | timeline, detection, the verdict and its evidence, what was proposed, approved and run, the trigger, the runbook and the Grafana links are all recorded. Summary, user impact, the mechanism, lessons and action items need a person, and the draft marks each one "_To write_" |
+| `--list` ranks a run's faults by what went wrong: missed, wrong root cause, wrong or unsafe action, escalated, rejected or failed fix, slow detection or recovery, split into several incidents, false alarm | the plan asks for "the most interesting incidents"; those are the ones where something nearly or actually went wrong |
+| Approvers are "the operator" in a draft unless `--keep-names` | blameless means about the system, not a person. The names stay in the hash-chained audit log |
+| A draft never overwrites an existing file without `--force` | the file holds the author's edits once they start |
+| The demo shows the approval path: a catalog release with 10% 500s promoted past the canary (`make demo-fault`), proposed for rollback, approved in the console | it is the path with a human in it, and the one the plan's video describes. The automatic canary abort is already shown by `make canary-test` in CI |
+| The blog post is drafted in the repository (`docs/blog.md`) and published on dev.to with a canonical link back | the draft gets the same number check as the README; the published copy is a copy |
+| The CV entry is printed, not committed | a CV is not part of the project; its numbers still come from the same file |
+
+**Week 11, done when** the README shows the measured results, the demo video
+and the architecture on its first screen, three postmortems are written, the
+blog post is published and linked, and the CV and LinkedIn are updated. The
+repository side is done and tested (`make aiops-unit`: the spans, the check,
+the CV entry, the postmortem drafts from a synthetic live test).
+
+Steps, after gate G3:
+
+1. `make results RUN=<run> MTTR_RUN=<live run>`: results, charts, the README
+   table and "what did not work", and every number in README.md and docs/blog.md.
+2. `make postmortem RUN=<live run>` lists the live test's faults; pick three
+   and run `make postmortem RUN=<live run> SEQ=<n>` for each. Fill in every
+   "_To write_", then commit them in `docs/postmortems/`.
+3. Record the video ([docs/demo.md](demo.md)) and link it in the README.
+4. Rewrite docs/blog.md in your own voice where it is still a draft, publish
+   it, and link it from the README and LinkedIn.
+5. `make writeup` prints the CV entry with the measured numbers.
+
+Known gaps after week 11:
+
+- Still no numbers: every span reads "–" until the final run.
+- The video, the postmortems' analysis, publishing the post, the CV, LinkedIn
+  and the applications are the author's work; nothing here does them.
+- A number typed into prose without a span is not checked. The README's
+  results table and "what did not work" are generated whole; anything else
+  quantitative should be a span.
+
+## 16. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -528,7 +589,7 @@ Known gaps after week 10:
 | Cloud bill surprise | budget alerts at $20/$50, destroy after every session, spot nodes, single NAT |
 | Laptop too small | drop Tempo, run 3 services for long recordings |
 
-## 16. Open questions
+## 17. Open questions
 
 - Which open-weight model is good enough for A4 on 4 GB–16 GB of RAM? `qwen3:8b`
   is the first candidate (week 8, `aiops/triage/config.yaml`); the tuning set decides.

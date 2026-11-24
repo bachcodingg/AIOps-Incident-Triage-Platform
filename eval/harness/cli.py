@@ -7,6 +7,8 @@
   harness mttr --run RUN --recording REC [--baseline-run R0 --baseline-recording REC0]   time to recover (week 9)
   harness final --run RUN --recording REC [--budget 10]      week 10: every variant on the test set, once (gate G3)
   harness results --run RUN [--mttr-run LIVE]               eval/results.md, results.json and the charts
+  harness writeup [--check] [--cv]                          week 11: the write-up's numbers, from results.json
+  harness postmortem --run LIVE (--list | --seq N)          week 11: a postmortem draft for a live-test fault
 
 --run finds the sealed labels (~/.incidentlens/labels/RUN), the public seal
 (eval/seals/) and the lock; each can also be given as a path.
@@ -19,16 +21,19 @@ import json
 import sys
 from pathlib import Path
 
-from chaos_runner.catalog import REPO_ROOT
+from chaos_runner.catalog import REPO_ROOT, Catalog
 from chaos_runner.labels import DEFAULT_LABELS_DIR, SealError
 from correlator.graph import ServiceGraph
 from detector.alerts import read_alerts
 from detector.cli import resolve_model
 from detector.series import load
 from recorder.store import Recording, resolve
+from remediator.store import DEFAULT_DB, Store
 
 from . import gate3
+from . import postmortem as pm
 from . import results as results_mod
+from . import writeup
 from .dataset import FreezeError, freeze, load_split, verify_lock
 from .figures import write_all
 from .final import DEFAULT_BUDGET_USD, FINAL_SEEDS, FINAL_VARIANTS, run_final
@@ -226,10 +231,62 @@ def cmd_results(args: argparse.Namespace) -> int:
     out.write_text(results_mod.markdown(report), encoding="utf-8")
     out.with_suffix(".json").write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {out}, {out.with_suffix('.json').name} and {len(figures)} charts in {out.parent / 'figures'}")
-    if args.set == "test" and not args.out and results_mod.update_readme(REPO_ROOT / "README.md", report):
-        print("README.md results table updated")
+    if args.set == "test" and not args.out:
+        if results_mod.update_readme(REPO_ROOT / "README.md", report):
+            print("README.md results table updated")
+        for path in writeup.update(writeup.DOCS, writeup.numbers(report)):
+            print(f"numbers in {path.relative_to(REPO_ROOT)} updated")
     for t in report["targets"]:
         print(f"  {t['metric']:<32} {t['target']:<8} {t['status']}")
+    return 0
+
+
+def cmd_writeup(args: argparse.Namespace) -> int:
+    report = writeup.load(Path(args.results) if args.results else writeup.RESULTS)
+    nums = writeup.numbers(report)
+    if args.cv:
+        print(writeup.cv(nums), end="")
+        return 0
+    paths = [Path(p) for p in args.files] if args.files else list(writeup.DOCS)
+    if args.check:
+        problems = [f"{p.relative_to(REPO_ROOT) if p.is_relative_to(REPO_ROOT) else p}: {x}"
+                    for p in paths if p.exists() for x in writeup.check(p.read_text(encoding="utf-8"), nums)]
+        for x in problems:
+            print(f"  {x}", file=sys.stderr)
+        if problems:
+            print("the write-up quotes numbers results.json does not have: `make writeup` rewrites them",
+                  file=sys.stderr)
+            return 1
+        n = sum(len(writeup.spans(p.read_text(encoding="utf-8"))) for p in paths if p.exists())
+        print(f"{n} numbers in the write-up match {'eval/results.json' if report else 'no results yet (all –)'}")
+        return 0
+    for path in writeup.update(paths, nums):
+        print(f"updated {path}")
+    return 0
+
+
+def cmd_postmortem(args: argparse.Namespace) -> int:
+    if not args.run and not args.labels:
+        raise pm.PostmortemError("give --run (the live-test chaos run) or --labels")
+    labels = Path(args.labels) if args.labels else DEFAULT_LABELS_DIR / args.run / "labels.jsonl"
+    db = Path(args.db)
+    if not db.exists():
+        raise FileNotFoundError(f"{db}: no live store (`make console` writes it during a live test)")
+    store = Store(db)
+    all_cases = pm.cases(labels, store)
+    if args.list or args.seq is None:
+        print(pm.listing(all_cases), end="")
+        return 0
+    case = pm.pick(all_cases, args.seq)
+    ok, chain = store.verify_audit()
+    text = pm.draft(case, run=args.run or labels.parent.name, catalog=Catalog.load(), grafana=args.grafana,
+                    keep_names=args.keep_names, chain=f"audit chain {'intact' if ok else 'BROKEN'}: {chain}")
+    out = Path(args.out) if args.out else pm.path_for(case)
+    if out.exists() and not args.force:
+        raise pm.PostmortemError(f"{out} exists and may hold your edits; --force overwrites it")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    print(f"wrote {out}; fill in the parts marked _To write_")
     return 0
 
 
@@ -311,13 +368,38 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--runs", help="default: eval/runs/<run>/test")
     s.add_argument("--out", help="default: eval/results.md (test), next to the labels (tuning)")
     s.set_defaults(func=cmd_results)
+
+    s = sub.add_parser("writeup", help="week 11: rewrite the numbers in the README and blog post from results.json")
+    s.add_argument("--check", action="store_true", help="CI: fail when a number differs from results.json")
+    s.add_argument("--cv", action="store_true", help="print the CV entry with the numbers filled in")
+    s.add_argument("--results", help="default: eval/results.json")
+    s.add_argument("files", nargs="*", help="default: README.md and docs/blog.md")
+    s.set_defaults(func=cmd_writeup)
+
+    s = sub.add_parser("postmortem", help="week 11: draft a blameless postmortem for one fault of a live test")
+    s.add_argument("--run", help="the live-test chaos run id")
+    s.add_argument("--labels", help="its sealed labels.jsonl (default: from --run)")
+    s.add_argument("--db", default=str(DEFAULT_DB), help="the live store `make console` wrote")
+    s.add_argument("--list", action="store_true", help="list the run's faults and what is worth a look")
+    s.add_argument("--seq", type=int, help="the fault to write up (its seq, from --list)")
+    s.add_argument("--grafana", default="http://localhost:3000")
+    s.add_argument("--keep-names", action="store_true", help="name approvers instead of 'the operator'")
+    s.add_argument("--out", help="default: docs/postmortems/<date>-<fault>-<target>.md")
+    s.add_argument("--force", action="store_true", help="overwrite an existing draft")
+    s.set_defaults(func=cmd_postmortem)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # "–" and "≥" on a Windows console
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (FreezeError, SealError, FileNotFoundError, results_mod.ResultsError) as exc:
+    except (FreezeError, SealError, FileNotFoundError, results_mod.ResultsError, writeup.WriteupError,
+            pm.PostmortemError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -244,6 +244,7 @@ aiops-unit: $(AIOPS_PY) ## Unit test recorder, detectors, correlator, triage, re
 	cd aiops && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 	cd eval && "$(CURDIR)/$(AIOPS_PY)" -m pytest -q
 	$(AIOPS) harness gate-check
+	$(AIOPS) harness writeup --check
 
 .PHONY: record
 record: tools $(AIOPS_PY) ## Record telemetry as the aiops account: make record NAME=baseline [HOURS=72]
@@ -366,6 +367,27 @@ eval-final: $(AIOPS_PY) ## Gate G3, once: make eval-final RUN=... RECORDING=... 
 results: $(AIOPS_PY) ## eval/results.md, results.json, charts and the README table: make results RUN=... [MTTR_RUN=live-run] [SET=tuning]
 	@test -n "$(RUN)" || { echo "usage: make results RUN=<run id> [MTTR_RUN=<live-test run>] [SET=tuning] [PARTIAL=1]"; exit 1; }
 	$(AIOPS) harness results --run '$(RUN)' $(if $(SET),--set $(SET)) $(if $(MTTR_RUN),--mttr-run '$(MTTR_RUN)') $(if $(PARTIAL),--partial)
+
+# --- week 11: write-up ------------------------------------------------------------
+# Every number in README.md and docs/blog.md sits in a <!-- n:key --> span that
+# `make writeup` fills from eval/results.json (`make results` does it too), and
+# CI checks. Postmortem drafts come from a live test's store and sealed labels.
+.PHONY: writeup
+writeup: $(AIOPS_PY) ## Refresh the numbers in README.md and docs/blog.md from eval/results.json, and print the CV entry
+	$(AIOPS) harness writeup
+	@$(AIOPS) harness writeup --cv
+
+.PHONY: postmortem
+postmortem: $(AIOPS_PY) ## Postmortem draft for one live-test fault: make postmortem RUN=<live run> [SEQ=n] (no SEQ: list them)
+	@test -n "$(RUN)" || { echo "usage: make postmortem RUN=<live-test chaos run> [SEQ=<fault seq>] [FORCE=1]"; exit 1; }
+	$(AIOPS) harness postmortem --run '$(RUN)' --grafana http://localhost:$(GRAFANA_PORT) $(if $(SEQ),--seq $(SEQ),--list) $(if $(FORCE),--force)
+
+# The demo video (docs/demo.md): with `make console VARIANT=A1` running in
+# another terminal, a catalog release that answers 10% of requests with 500s,
+# promoted past the canary. The console proposes the rollback; you approve it.
+.PHONY: demo-fault
+demo-fault: tools $(CHAOS_PY) ## The demo's bad release (run `make console VARIANT=A1` first): docs/demo.md
+	$(CHAOS) inject F02 --target $(or $(TARGET),catalog) --intensity $(or $(INTENSITY),0.10) --duration $(or $(DURATION),15m)
 
 .PHONY: detect-test
 detect-test: tools $(AIOPS_PY) ## Detection layer on a running cluster: rules, the aiops account's reach, a recorded chunk
