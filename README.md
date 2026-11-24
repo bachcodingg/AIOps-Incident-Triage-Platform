@@ -40,7 +40,7 @@ that they match.
 
 ```mermaid
 flowchart LR
-  subgraph cluster["Kubernetes: kind, or EKS / OCI from Terraform; deployed only by ArgoCD"]
+  subgraph cluster["Kubernetes (kind, or EKS and OCI from Terraform), deployed only by ArgoCD"]
     direction TB
     gw[gateway] --> sa[search-api] & cat[catalog]
     sa --> redis[(Redis)]
