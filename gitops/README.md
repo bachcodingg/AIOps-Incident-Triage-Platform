@@ -109,8 +109,21 @@ Enforced in the `shopsearch` namespace:
 `make up` builds images locally, so the kind environment alone also allows the
 `incidentlens/` prefix.
 
-Kyverno 1.19 marks `ClusterPolicy` as deprecated in favour of the CEL-based
-policy types. These still work on the pinned chart; migrating is a follow-up.
+The policies use Kyverno's CEL policy types (`policies.kyverno.io/v1`): three
+`ValidatingPolicy` resources and one `ImageValidatingPolicy`. Kyverno 1.19
+deprecates `ClusterPolicy`, so they moved in week 7. Each one matches pods in
+`shopsearch` through a namespace selector, and a denial names what failed
+(the image without a tag, the container without limits), not just the rule.
+There is no autogen for
+Deployments: every workload here, Argo Rollouts and the CloudNativePG pods
+included, reaches the policies as a pod, which `ClusterPolicy` autogen never
+covered for Rollouts anyway.
+
+`kyverno test` checks the three validating policies against
+[tests/pods.yaml](policies/tests/pods.yaml) with no cluster;
+[tests/values.yaml](policies/tests/values.yaml) stands in for the namespace
+labels. `verify-signatures` needs the registry, so `make canary-test` checks it
+on a running cluster.
 
 ## Checks
 

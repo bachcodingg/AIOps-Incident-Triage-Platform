@@ -185,6 +185,7 @@ Changes to the original plan, and why:
 | Canary fails on a rise over the stable release as well as on the SLO | F03 adds 250 ms, which fits under the 300 ms SLO |
 | Canary weights are nominal | no traffic router, so Rollouts splits by replica count |
 | External Secrets waits for week 4 | CloudNativePG generates the only secret so far |
+| Policies use Kyverno's CEL types, not `ClusterPolicy` (week 7) | Kyverno 1.19 deprecates `ClusterPolicy`; the CEL types match on a namespace selector and say which image or container failed |
 
 ## 9. Observability (week 4)
 
