@@ -90,3 +90,12 @@ spec:
       image: registry.k8s.io/pause:latest
       resources:
         limits: {cpu: 250m, memory: 128Mi}
+---
+# Outside shopsearch, none of the policies apply.
+apiVersion: v1
+kind: Pod
+metadata: {name: elsewhere, namespace: default}
+spec:
+  containers:
+    - name: app
+      image: quay.io/someone/miner:latest

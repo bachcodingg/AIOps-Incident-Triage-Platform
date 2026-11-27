@@ -120,10 +120,11 @@ spec:
 EOF
 }
 limits='{limits: {cpu: 100m, memory: 64Mi}}'
-rejected "pod without limits" 'require-limits' "$(pod redis:8.2-alpine '{}')"
-rejected "pod with a latest tag" 'disallow-latest' "$(pod redis:latest "$limits")"
-rejected "pod from an unknown registry" 'restrict-registries' "$(pod quay.io/someone/miner:1.0 "$limits")"
-rejected "unsigned image in our registry" 'verify-signatures|signed-by-the-release-workflow' \
+# Each pattern accepts the policy's name or its message, whichever the denial carries.
+rejected "pod without limits" 'require-limits|CPU and memory limits' "$(pod redis:8.2-alpine '{}')"
+rejected "pod with a latest tag" 'disallow-latest|explicit tag' "$(pod redis:latest "$limits")"
+rejected "pod from an unknown registry" 'restrict-registries|allow list' "$(pod quay.io/someone/miner:1.0 "$limits")"
+rejected "unsigned image in our registry" 'verify-signatures|signed by the release workflow|does not have a digest' \
   "$(pod 'ghcr.io/bachcodingg/incidentlens/gateway:unsigned' "$limits")"
 
 echo "all canary and policy checks passed"

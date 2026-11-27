@@ -1,0 +1,13 @@
+# `kyverno test` has no cluster, so the namespace labels the policies select on
+# are given here.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: namespaces
+namespaceSelector:
+  - name: shopsearch
+    labels:
+      kubernetes.io/metadata.name: shopsearch
+  - name: default
+    labels:
+      kubernetes.io/metadata.name: default

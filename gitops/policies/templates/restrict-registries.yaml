@@ -1,26 +1,26 @@
 {{- $allowed := concat (list .Values.signedImages) .Values.allowedImages -}}
 {{- if .Values.allowLocalImages }}{{ $allowed = append $allowed "incidentlens/*" }}{{ end -}}
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+{{- /* Each glob becomes an anchored regex: `*` matches anything, the rest is literal. */ -}}
+{{- $patterns := list -}}
+{{- range $allowed }}{{ $patterns = append $patterns (regexQuoteMeta . | replace "\\*" ".*") }}{{ end -}}
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-registries
   annotations:
     policies.kyverno.io/description: Signature checks only cover our own images, so everything else must come from a short list.
 spec:
-  background: false
-  rules:
-    - name: images-come-from-the-allow-list
-      match:
-        any:
-          - resources:
-              kinds: [Pod]
-              namespaces: [shopsearch]
-      validate:
-        failureAction: Enforce
-        message: "Allowed images: {{ join ", " $allowed }}."
-        pattern:
-          spec:
-            containers:
-              - image: {{ join " | " $allowed | quote }}
-            =(initContainers):
-              - image: {{ join " | " $allowed | quote }}
+  validationActions: [Deny]
+  evaluation:
+    background: {enabled: false}
+  {{- include "policies.matchPods" . | nindent 2 }}
+  variables:
+    {{- include "policies.containers" . | nindent 4 }}
+    - name: unknown
+      expression: >-
+        variables.containers.map(c, c.image).filter(i, !i.matches(r{{ printf "^(%s)$" (join "|" $patterns) | squote }}))
+  validations:
+    - expression: size(variables.unknown) == 0
+      message: "Allowed images: {{ join ", " $allowed }}."
+      messageExpression: >-
+        'Not on the allow list: ' + variables.unknown.join(', ') + '. Allowed images: {{ join ", " $allowed }}.'

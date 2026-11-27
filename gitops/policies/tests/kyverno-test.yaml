@@ -8,44 +8,45 @@ policies:
   - rendered.yaml
 resources:
   - pods.yaml
+variables: values.yaml
 results:
   - policy: require-limits
-    rule: containers-have-cpu-and-memory-limits
+    isValidatingPolicy: true
     kind: Pod
     resources: [shopsearch/good, shopsearch/latest-tag]
     result: pass
   - policy: require-limits
-    rule: containers-have-cpu-and-memory-limits
+    isValidatingPolicy: true
     kind: Pod
     resources: [shopsearch/no-limits, shopsearch/memory-limit-only, shopsearch/init-without-limits]
     result: fail
   - policy: disallow-latest
-    rule: images-have-a-fixed-tag
+    isValidatingPolicy: true
     kind: Pod
-    resources: [shopsearch/good]
+    resources: [shopsearch/good, shopsearch/chaos-pause]
     result: pass
   - policy: disallow-latest
-    rule: images-have-a-fixed-tag
+    isValidatingPolicy: true
     kind: Pod
-    resources: [shopsearch/latest-tag, shopsearch/no-tag]
+    resources: [shopsearch/latest-tag, shopsearch/no-tag, shopsearch/chaos-pause-latest]
     result: fail
   - policy: restrict-registries
-    rule: images-come-from-the-allow-list
+    isValidatingPolicy: true
     kind: Pod
     resources: [shopsearch/good, shopsearch/chaos-pause]
     result: pass
   - policy: restrict-registries
-    rule: images-come-from-the-allow-list
+    isValidatingPolicy: true
     kind: Pod
     resources: [shopsearch/unknown-registry]
     result: fail
-  - policy: disallow-latest
-    rule: images-have-a-fixed-tag
+  - policy: restrict-registries
+    isValidatingPolicy: true
     kind: Pod
-    resources: [shopsearch/chaos-pause]
-    result: pass
+    resources: [default/elsewhere]
+    result: skip
   - policy: disallow-latest
-    rule: images-have-a-fixed-tag
+    isValidatingPolicy: true
     kind: Pod
-    resources: [shopsearch/chaos-pause-latest]
-    result: fail
+    resources: [default/elsewhere]
+    result: skip
